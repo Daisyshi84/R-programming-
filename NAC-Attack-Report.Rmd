@@ -1,0 +1,3654 @@
+---
+title: "NACAttackPrime_Exploratory_Analysis"
+author: "Daisy Shi"
+date: "`r format(Sys.time(), '%B %d, %Y %H:%M:%S')`"
+output:
+  word_document: default
+  html_document:
+  pdf_document: default
+  df_print: paged
+params:
+  Redcap_file_download_date: "2024-09-04_1047" 
+---
+
+```{r setup, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# 
+# "2024-07-31_1117" 
+library(ggcorrplot)
+library(labelled)
+
+setwd("C:/Users/mshi27/Downloads")
+Redcap_date<- params$Redcap_file_download_date
+# clinical_filename<- paste0("C:\\Users\\mshi27\\Downloads\\NACAttackClinicLevel_DATA_",Redcap_date,".csv")
+NACAttackPrime_filename<- paste0("NACAttackPrime_R_",Redcap_date,".r")
+source(NACAttackPrime_filename)#Call R code for data processing 
+source("NAC_Reshape.r")
+race_reshape(new_data_name = "original_data_with_new_race")
+download_date <- as.Date(today(), format = "%Y-%m-%d")
+patient_id_discussed_for_certification<- c('2201','1902','3406','3411','2513','3902')
+# download_date <- strsplit(params$Redcap_file_download_date,"_")[[1]][1]
+clinical_filename<- "C:\\Users\\mshi27\\Downloads\\NACAttackClinicLevel_DATA_2024-09-04_1048.csv"
+```
+
+## Overall Numbers
+
+```{r , message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+demographic_variable <- c("redcap_event_name.factor",'redcap_repeat_instrument','redcap_repeat_instance',"patient_id","Sex", "Race", "Age")
+redcap_var<- c("redcap_event_name.factor","redcap_repeat_instrument","redcap_repeat_instance")
+
+# site<- ("redcap_data_access_group")
+
+#note:
+outcome<- c("octs_ezwdth_od","octs_ezwdth_os")#screen ez
+
+final_outcome<-  c("octv_ezwdth_od","octv_ezwdth_os") #baseline ez
+
+filter_data(original_data_with_new_race,"Screening")
+
+filter_data(original_data_with_new_race,"Baseline") 
+
+
+ineligible  <- Screening %>%
+  mutate(
+    Ineligible = case_when(
+      en_site_preeligible == "0" ~ "ineligible",
+      er_eligible == "0" ~ "ineligible",
+      ec_eligible == "0" & !is.null(ec_staffid2) ~ "ineligible",
+      rd_pi == "0" | rd_rz_accept == "0" ~ "ineligible",
+      TRUE ~ "eligible"  ))
+
+eligible  <- Screening %>%
+  mutate(
+    ineligible = case_when(
+      en_site_preeligible == "0" ~ "ineligible",
+      er_eligible == "0" ~ "ineligible",
+      ec_eligible == "0" & !is.null(ec_staffid2) ~ "ineligible",
+      rd_pi == "0" | rd_rz_accept == "0" ~ "ineligible",
+      TRUE ~ "eligible"  )) %>% filter(ineligible=="eligible",!redcap_repeat_instance %in% c(1,2))
+#######################################################################################################
+# Final screening eligibility determination by both study chair and OCT reading center
+# ec_eye.factor :(left or right eye, or both eye) - both study chair and OCT reading center for Final screening eligibility determination
+# ec_eligible.factor (Yes or No) - both study chair and OCT reading center for Final screening eligibility determination
+###############################################
+eye_level_var<- c("va_sphere_od", "va_sphere_os","va_etdrs_od", "va_etdrs_os","mps_sens_od", "mps_sens_os","oct_cst_od", "oct_cst_os","va_etdrs_od", "va_etdrs_os")
+aoslos<- c("aoslos_nac_od.factor","aoslos_nac_os.factor")
+confirm<- c("ec_confirm.factor","ec_confirm","ec_staffid1","ec_staffid2")
+
+final_eligible<-  Screening %>%
+  dplyr::select(rd_pi_no,patient_id,ec_eligible.factor,ec_eye.factor,all_of(demographic_variable),all_of(eye_level_var)) %>% 
+  dplyr::filter(ec_eligible.factor %in% c("Yes (Eligible)")) %>% 
+  dplyr::filter(!redcap_repeat_instance %in% c(1,2)) %>% 
+  dplyr::select(-redcap_repeat_instrument,-redcap_repeat_instance)
+
+# cat("Note * Among Final screening eligibility dataset, Patient 4502 withdraw consent, all of the summary statistic table will be excluded patient 4502")
+pip <- Screening %>% 
+dplyr::select(all_of(aoslos),all_of(demographic_variable),starts_with(c("en","er","ec"))&!starts_with(c("er_f","er_c"))) %>% 
+dplyr::select(ends_with(".factor"))
+
+
+sample_category<- c("en_site_preeligible","en_site_eligible","er_eligible","ec_eligible","ec_staffid1","ec_staffid2", "rd_pi","rd_rz_accept","rd_assignment.factor")
+
+
+ex<-original_data_with_new_race %>% select(patient_id,ex_reason,ex_withdrawdt) %>% na.omit()
+
+
+rd <- original_data_with_new_race %>%
+  select(patient_id, rd_date) %>%
+  filter(!is.na(rd_date) & rd_date != "") %>%
+  full_join(ex, by = "patient_id") %>%
+  mutate(days_from_randomized_to_withdraw = round(as.numeric(difftime(ex_withdrawdt, rd_date, units = "days")),0))
+
+
+#This data included all of the patients
+sample<- original_data_with_new_race %>%
+  # Select relevant columns
+  dplyr::select(all_of(demographic_variable), all_of(sample_category),redcap_data_access_group)%>% 
+  # Filter rows
+  filter(redcap_event_name.factor %in% c("Screening", "Baseline") & !redcap_repeat_instance %in% c(1, 2)) %>% 
+  # Remove redundant column
+  dplyr::select(-redcap_repeat_instrument,redcap_repeat_instance) %>%  
+  # Group by patient_id for filling operations
+  group_by(patient_id) %>%
+  # Fill missing values up and down for all columns
+  fill(
+    everything(),
+    .direction = "updown"
+  ) %>%
+  # Ungroup for further operations
+  ungroup() %>%
+  full_join(rd,by=c("patient_id")) %>% 
+ 
+  # Identify and retain only email addresses or NA in ec_staffid2
+  mutate(
+    ec_staffid1 = ifelse(str_detect(ec_staffid1, "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b") | is.na(ec_staffid1), ec_staffid1, NA),
+    # Set non-emails to NA
+    ec_staffid2 = ifelse(str_detect(ec_staffid2, "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b") | is.na(ec_staffid2), ec_staffid2, NA)
+  ) %>%
+  group_by(patient_id) %>% 
+  # Fill remaining missing values in ec_staffid2 downwards
+  fill(
+    ec_staffid1,ec_staffid2,
+    .direction = "down"
+  ) %>%
+  # Ungroup again
+  ungroup() %>% 
+  dplyr::select(-redcap_event_name.factor,-redcap_repeat_instance) %>% 
+  unique() %>% 
+  mutate(
+    category = case_when(
+      en_site_preeligible == 0 |
+      en_site_eligible == 0 |
+      er_eligible == 0 |
+      ec_eligible == 0 |
+      rd_pi == 0 |
+      rd_rz_accept == 0 ~ "ineligible",
+      ex_reason == '4' ~ "withdrawal",
+      !is.na(rd_assignment.factor) |  rd_assignment.factor != "" ~ "Randomized", 
+      TRUE ~ "eligible"
+    )
+  ) %>% 
+  mutate(
+    category = ifelse(category == "eligible" & is.na(ec_staffid2), "in pipeline", category)
+  )
+
+
+library(knitr)
+# Create a frequency table
+my_table <- table(sample$category)
+# Calculate percentages and add margins for counts and percentages
+my_table_df <- as.data.frame(my_table) %>%
+  mutate(Percentage = round(Freq / sum(Freq) * 100, 2))
+# Add a row for the total counts and percentages
+my_table_df <- rbind(
+  my_table_df,
+  data.frame(Var1 = "Total", Freq = sum(my_table_df$Freq), Percentage = sum(my_table_df$Percentage)))
+# Format and display the table
+my_table_df %>%
+  kable(col.names = c("Category", "Count", "Percentage (%)"))
+
+
+a <- sample %>% dplyr::select(patient_id)  # all patients
+e <- sample %>% filter(!category %in% c("ineligible","withdrawal")) %>% select(patient_id) # e is the eligible patients, exclude "ineligible","withdrawal"
+r <- sample %>% filter(!is.na(rd_assignment.factor)) %>% select(patient_id) # randomized patients
+# withdrwal patient_id
+w<- sample %>% filter(category %in% c("withdrawal")) %>% select(patient_id)
+# 
+# cat("Total Number of randomized patients: ",sample %>% filter(category == 'Randomized') %>% summarise(total = sum(!is.na(category))) %>% pull(total))
+
+```
+
+## NAC18c Coordinating Center Eligibility Issues
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# Find variable names containing 'eye' or 'eligible'...
+matching_columns <- grep("eye|eligible|fail|confirm|inelig|ineligiblesp|review|dt", names(pip), value = TRUE)
+reason_not_elig <- c("er_ineligiblesp", "er_inelig_os", "er_inelig_od")
+pipeline_pre <- Screening %>% 
+  dplyr::select(all_of(demographic_variable),all_of(matching_columns),all_of(reason_not_elig),all_of(aoslos),all_of(confirm)) %>% 
+  dplyr::filter(!redcap_repeat_instance %in% c(1,2)) 
+
+# describe(pipeline[matching_columns])
+ # describe(pipeline)
+# Rename and organize the order of variable names
+P <- pipeline_pre %>%
+  mutate(`CC received acknowledgement` = ifelse(ec_confirm==1,"Yes","No")) %>% 
+  dplyr::select(-ec_confirm,-ec_confirm.factor) %>% 
+  rename_with( ~ gsub("^en_", "clinic_eligibility_", .), starts_with("en_") ) %>%
+  rename_with( ~ gsub("^er_", "chairs_office_eligibility_", .), starts_with("er_") ) %>%
+  rename_with( ~ gsub("^ec_", "coordinating_center_eligibility_", .), starts_with("ec_") ) %>%
+  dplyr::select(
+    everything(),  
+    starts_with("clinic_eligibility_"),
+    starts_with("chairs_office_eligibility_"),
+    starts_with("coordinating_center_eligibility_"))%>% 
+   mutate(across(everything(), as.character))  
+# ec_eye.factor :(left or right eye, or both eye) - both study chair and OCT reading center for Final screening eligibility determination
+# ec_eligible.factor (Yes or No) - both study chair and OCT reading center for Final screening eligibility determination
+
+############################################################################################
+# NAC18c Coordinating Center Eligibility(nac18c_coordinating_center_eligibility) Data quality check;
+############################################################################################
+ 
+NAC18c_check<- Screening %>% 
+filter(patient_id %in% (sample %>% filter(category != 'ineligible') %>% pull(patient_id)))  %>% 
+dplyr::select(patient_id, ec_confirm, ec_staffid1, ec_staffdttm1, ec_staffid2, ec_staffdttm2) %>% 
+distinct(patient_id, .keep_all = TRUE)
+ 
+
+result <- NAC18c_check %>%
+  group_by(patient_id) %>%
+  mutate(
+    Issue1 = ifelse(ec_staffid1 != "" & ec_staffid2 == "", "Daisy forgot to sign ", "OK"),
+    Issue2 = ifelse(ec_confirm == 0 | is.na(ec_confirm) , "CC did not receive acknowledgment.","OK"),
+    Issue3 = ifelse(ec_staffid1 == "" |ec_staffid2 == "", "no audit confirmed(in pipline)", "OK"))
+# Print the result
+
+Issues <- result %>%
+  dplyr::select(patient_id, ec_staffid1,ec_staffid2,Issue1, Issue2, Issue3) %>%
+  filter(!(Issue1 == "OK" & Issue2 == "OK" & Issue3 == "OK"))
+
+print("NAC18c Coordinating Center Eligibility Issues among pre-eligible people : ")
+
+For_Folahan_Daisy<-Issues %>% mutate(For_Folahan = ifelse(Issue3 =="OK","Need to reach site for acknowledgment",NA))
+
+# view(For_Folahan_Daisy)
+
+For_Folahan<- For_Folahan_Daisy %>% filter(!is.na(For_Folahan))
+# print(kable(For_Folahan%>% dplyr::select(patient_id,For_Folahan) %>% dplyr::filter(!is.na(For_Folahan))))
+
+```
+
+## Kaplan-Meier survival curves
+
+```{r , message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# https://www.emilyzabor.com/tutorials/survival_analysis_in_r_tutorial.html 
+################################################
+#Summarize the number of days between screening visit date and Chair’s office determination date, and between screening visit date to OCT grading date
+
+ 
+OCT_date_var<- c("octs_visdat","octs_gradedt")
+################################################
+
+time_to_oct <- original_data_with_new_race %>%
+  filter(en_site_eligible.factor == "Yes, the candidate is eligible") %>%
+  dplyr::select(all_of(demographic_variable), en_visitdt, all_of(OCT_date_var)) %>%
+  mutate(
+    en_visitdt = as.Date(en_visitdt),  # Convert to Date format
+    octs_gradedt = as.Date(octs_gradedt, format = "%d-%b-%Y"),
+    octs_gradedt = format(octs_gradedt, "%Y-%m-%d"),
+    time = case_when(
+      !is.na(octs_gradedt) ~ round(as.numeric(difftime(octs_gradedt, en_visitdt, units = "days"))),
+      is.na(octs_gradedt) ~ round(as.numeric(difftime(download_date, en_visitdt, unit = "days")))),
+    censor = ifelse(is.na(octs_gradedt), 0, 1)
+  )
+############# OCT reading center #############
+cuminc(Surv(time, as.factor(censor)) ~ 1, data = time_to_oct) %>%
+  ggcuminc() + 
+  labs(
+     x = "Days",
+     title = "Duration from Screening to OCT Grading",
+     pval = TRUE,
+     conf.int = TRUE,
+     ncensor.plot = TRUE,
+     risk.table = "abs_pct",
+     surv.median.line = "hv" ) + 
+    add_confidence_interval() +
+    add_risktable()
+
+survfit(Surv(time, censor) ~ 1, data = time_to_oct) %>%
+  tbl_survfit(
+  probs = 0.5,
+  label_header = "**Median survival: time_to_OCT_Grading  (95% CI)**") 
+ 
+
+################################################
+# Define the date variables of interest; i.e. , Visit Date, Date of form completion(nac18b_chairs_office_eligibility), Date of Folahan filled,  Date of Daisy filled; 
+# er_eligible  is 18b question 22,  ec_rc_eye  is 18c question
+
+date_var <- c("en_visitdt", "er_formdt", "ec_staffdttm1", "ec_staffdttm2")
+
+formatted_dates <- Screening %>%
+  mutate(
+    Ineligible = case_when(
+      en_site_preeligible == "0" ~ "ineligible",
+      er_eligible == "0" ~ "ineligible",
+      ec_eligible == "0" & !is.null(ec_staffid2) ~ "ineligible",
+      rd_pi == "0" | rd_rz_accept == "0" ~ "ineligible",
+      TRUE ~ "eligible"  )) %>%
+  dplyr::select(all_of(demographic_variable), all_of(date_var), ec_eligible.factor,er_eligible.factor,ec_rc_eye.factor,
+ en_site_eligible.factor,Ineligible) %>%
+  # Filter out specific 'redcap_repeat_instance' values
+  filter(!redcap_repeat_instance %in% c("1", "2")) %>%
+  # Convert date columns to Date format and calculate date differences
+  mutate(
+    en_visitdt = as.Date(en_visitdt, format = "%Y-%m-%d"),
+    er_formdt = as.Date(er_formdt, format = "%Y-%m-%d"),
+    ec_staffdttm1 = as.Date(ec_staffdttm1, format = "%Y-%m-%d"),
+    ec_staffdttm2 = as.Date(ec_staffdttm2, format = "%Y-%m-%d"))  
+
+# Meaningful study sample for time to ED; en_visitdt not missing and en_site_eligible.factor is yes, eleigible.  -> this results the sample of subjects that were deemed as preliminarily eligible by site PIs. 
+timetoED<- formatted_dates %>% filter(!is.na(en_visitdt) & en_site_eligible.factor =="Yes, the candidate is eligible")
+# Then Time to chair ED
+# •	if er_formdt is available, it is an event, time to chair ED = er_formdt- en_visitdt
+# •	if er_formdt is NA and ec_staffdttm2 is also  NA, this patient is still in pipeline. it is censored, time to chair ED, is data download date-screen date, but censored.
+# •	if er_formdt is NA and ec_staffdttm2 is available, you should check Q2 of 18C form should be answer “Neither eye”, i.e. this patient is SF SCREENING FAIL determined by OCT RC. In this case, the chair doesn’t need to evaluate eligibility anymore. This can be treated as an event for time to chair ED , and time is ec_staffdttm2- en_visitdt
+
+time_to_chair_ED <- timetoED %>%
+  mutate(
+    censor = case_when(
+      !is.na(er_formdt) ~ 1,
+      is.na(er_formdt) & is.na(ec_staffdttm2) ~ 0,
+      is.na(er_formdt) & !is.na(ec_staffdttm2) | ec_rc_eye.factor %in% c("Neither eye (patient is ineligible)") ~ 1
+    ),
+    time = case_when(
+      !is.na(er_formdt) ~ as.numeric(difftime(er_formdt, en_visitdt, units = "days")),
+      is.na(er_formdt) & is.na(ec_staffdttm2) ~ as.numeric(difftime(download_date, en_visitdt, units = "days")),
+      is.na(er_formdt) & !is.na(ec_staffdttm2) | ec_rc_eye.factor %in% c("Neither eye (patient is ineligible)") ~ as.numeric(difftime(ec_staffdttm2, en_visitdt, units = "days"))
+    )
+  )
+# Time for final ED:
+# •	if ec_staffdttm2 is available, this is an censor, and time for final ED= ec_staffdttm2- en_visitdt
+# •	if ec_staffdttm2 is NA and er_formdt is available and also form 18b Q22 the chair indicated Yes the subject is eligible, this means the CC is waiting for OCT RC’s grading report, this is a censored case, time for final ED= data download date- en_visitdt
+# •	if ec_staffdttm2 is NA and er_formdt is available and also form 18b Q22 the chair indicated No the subject is not eligible, this means the site knows this is SF. This is an censor case, time for final ED= er_formdt - en_visitdt.
+# •	if ec_staffdttm2 is NA and er_formdt is NA, this means the chair’s office has not determined, CC has not received OCT RC’s result either. the patient is still in pipeline. This is a censored case, time for final ED=      data download date- en_visitdt   
+
+time_to_final_ED<-  timetoED %>% 
+  mutate(
+    censor = case_when(
+      !is.na(ec_staffdttm2) ~ 1,
+      is.na(ec_staffdttm2) & !is.na(er_formdt) & er_eligible.factor %in% c("Yes (Eligible)") ~ 0,
+      is.na(ec_staffdttm2) & !is.na(er_formdt) | er_eligible.factor %in% c("No (ineligible)") ~ 1,
+      is.na(ec_staffdttm2) & is.na(er_formdt)  ~ 0),
+     time = 
+      case_when(
+      !is.na(ec_staffdttm2) ~ as.numeric(difftime(ec_staffdttm2, en_visitdt, units = "days")),
+        is.na(ec_staffdttm2) & !is.na(er_formdt) & er_eligible.factor %in% c("Yes (Eligible)") ~ as.numeric(difftime(download_date, en_visitdt, units = "days")),
+      is.na(ec_staffdttm2) & !is.na(er_formdt) | er_eligible.factor %in% c("No (ineligible)")  ~ as.numeric(difftime(er_formdt,en_visitdt, units = "days")),
+       is.na(ec_staffdttm2) & is.na(er_formdt) ~ as.numeric(difftime(download_date, en_visitdt, units = "days"))
+    ))
+
+# describeBy(formatted_dates %>% dplyr::select(days_to_chair_determination, days_to_final_eligibility)) 
+# cat('\n\n\n\n')
+# cat("Summarize the number of days between screening visit date and Chair’s office determination date, and between screening visit date and final eligibility date.")
+# cat('\n\n')
+# summary(formatted_dates[c("days_to_chair_determination", "days_to_final_eligibility")])
+# cat('\n\n')
+# 
+# cat("median days from time to Chair determination date using survival method : ") 
+# survfit(Surv(new_days_chair, censor) ~ 1, data = formatted_dates) 
+
+# cat("Median days from time to Final determination date using survival method: " )
+# survfit(Surv(new_days_final, censor) ~ 1, data = formatted_dates) 
+
+
+###########################
+
+# # Survival analysis for Chair determination date
+# survfit_object <- survfit(Surv(new_days_final, censor) ~ 1, data = formatted_dates)
+# # Modify the survival probabilities
+# survfit_object$surv <- 1 - survfit_object$surv
+# # Plot cumulative incidence using ggsurvplot
+# ggsurvplot(survfit_object,
+#                       title = "Kaplan-Meier Curve - Time to Final Eligibility Determination",
+#                       xlab = "Days", ylab = "Survival Probability",
+#                       pval = TRUE,
+#                       surv.median.line = "hv",
+#                       conf.int = FALSE,
+#                       risk.table = "abs_pct",
+#                       xlim = c(2, max(formatted_dates$new_days_final)),
+#                      legend.labs = c(paste("Median = ","12 days")))
+
+# 
+# survfit_object1 <- survfit(Surv(new_days_chair, censor) ~ 1, data = formatted_dates)
+# survfit_object1$surv <- 1 - survfit_object1$surv
+# ggsurvplot(survfit_object1,
+#                       title = "Kaplan-Meier Curve - Time to Chair Eligibility Determination",
+#                       xlab = "Days", ylab = "Survival Probability",
+#                       pval = TRUE,
+#                       surv.median.line = "hv",
+#                       conf.int = FALSE,
+#                       risk.table = "abs_pct",
+#                       xlim = c(3, max(formatted_dates$new_days_chair)),
+#                       legend.labs = c(paste("Median = ","9 days")))
+ 
+
+# Create cumulative incidence plot  final
+cuminc(Surv(time, as.factor(censor)) ~ 1, data = time_to_final_ED) %>%
+  ggcuminc() + 
+  labs(
+     x = "Days",
+     title = "Final Eligibility Determination",
+     pval = TRUE,
+     conf.int = TRUE,
+     ncensor.plot = TRUE,
+     risk.table = "abs_pct",
+     surv.median.line = "hv" ) + 
+    add_confidence_interval() +
+    add_risktable()
+
+survfit(Surv(time, censor) ~ 1, data = time_to_final_ED) %>%
+  tbl_survfit(
+  probs = 0.5,
+  label_header = "**Median survival: time_to_final_ED (95% CI)**")
+
+
+# fit<- survfit(Surv(time, censor) ~ 1, data = time_to_final_ED) 
+# fit$surv<- 1- fit$surv
+# # Plot Kaplan-Meier survival curve
+# plot(fit$surv, type = "s",main = "Final Eligibility Determination", xlab = "Time", ylab = "Survival Probability")
+
+# summary(fit)
+
+
+############# Chair Eligibility Determination #############
+cuminc(Surv(time, as.factor(censor)) ~ 1, data = time_to_chair_ED) %>%
+  ggcuminc() + 
+  labs(
+     x = "Days",
+     title = "Chair Eligibility Determination",
+     pval = TRUE,
+     conf.int = TRUE,
+     ncensor.plot = TRUE,
+     risk.table = "abs_pct",
+     surv.median.line = "hv" ) + 
+    add_confidence_interval() +
+    add_risktable()
+
+survfit(Surv(time, censor) ~ 1, data = time_to_chair_ED) %>%
+  tbl_survfit(
+  probs = 0.5,
+  label_header = "**Median survival: time_to_chair_ED (95% CI)**") 
+ 
+
+# fit1<- survfit(Surv(time, censor) ~ 1, data = time_to_chair_ED) 
+# fit1$surv<- 1- fit1$surv
+# # Plot Kaplan-Meier survival curve
+# plot(fit1$surv, type = "s",main = "Chair Eligibility Determination", xlab = "Time", ylab = "Survival Probability")
+
+# summary(fit1)
+
+```
+
+## **Table 1: Summary of Eye Level Data Among Randomized Patients**(Note:N is the total rows in the eye level dataset,i.e. Repeated Measure Data. Ineligible patients and eyes are excluded in the samples)
+
+## Summary of Randomized Patients Eye Level Data(Screening Form)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+#################################################################################
+# Note: eye level data use for modeling/summary statistics but for not correlation, this is repeated measure data; i.e. if we remove ineligible patients eye then the data will not aligned for calculate correlation between left and right eye;
+## Repeated Measure Data;
+
+
+# Below variables exist in many forms. for example, baseline, M04.5..... need to check the redcap event name to make sure to get the correct value;
+#  "vav_sphere_od", "vav_sphere_os", "vav_spheresign_od", "vav_spheresign_os","vav_etdrs_od", "vav_etdrs_os", "mpv_sens_od", "mpv_sens_os", "sdoct_cst_od", "sdoct_cst_os"
+#################################################################################
+
+# Create a function to process the data
+process_data <- function(data, columns,redcap_event, prefix) {
+  data %>%
+    mutate(across(all_of(columns), ~ unclass(.))) %>%
+    select(redcap_event_name.factor,patient_id,columns) %>% 
+    filter(redcap_event_name.factor=={{redcap_event}}) %>% 
+    pivot_longer(cols = all_of(columns), values_to = prefix) %>%
+    filter(!is.na(!!sym(prefix))) %>%  # Filter out empty values
+    arrange(desc(patient_id)) %>%
+    mutate(OD_OS = toupper(substr(name, nchar(name) - 1, nchar(name)))) %>%
+    dplyr::select(patient_id,redcap_event_name.factor, OD_OS, !!sym(prefix))
+}
+# Process different types of eye level data from screening from 
+Sphere <- process_data(original_data_with_new_race, c("va_sphere_od", "va_sphere_os"), "Screening","Sphere")
+Mean_Sensitivity <- process_data(original_data_with_new_race, c("mps_sens_od", "mps_sens_os"), "Screening", "Mean_Sensitivity")
+Central_Thickness <- process_data(original_data_with_new_race, c("oct_cst_od", "oct_cst_os"), "Screening","Central_Thickness")
+Visual_Acuity <- process_data(original_data_with_new_race, c("va_etdrs_od", "va_etdrs_os"), "Screening","Visual_Acuity")
+EZ_width <- process_data(original_data_with_new_race,c("octs_ezwdth_od", "octs_ezwdth_os"),"Screening","EZ_width")
+
+
+
+# Process different types of eye level data from baseline from ,I.E. you can change "Baseline" to M04.5", below variables also have 
+
+Sphere1 <- process_data(original_data_with_new_race, c("vav_sphere_od", "vav_sphere_os"),	
+"Baseline", "Sphere")
+Mean_Sensitivity1 <- process_data(original_data_with_new_race, c("mpv_sens_od", "mpv_sens_os"), "Baseline","Mean_Sensitivity")
+Central_Thickness1 <- process_data(original_data_with_new_race, c("sdoct_cst_od", "sdoct_cst_os"), "Baseline","Central_Thickness")
+Visual_Acuity1 <- process_data(original_data_with_new_race, c("vav_etdrs_od", "vav_etdrs_os"), "Baseline","Visual_Acuity")
+EZ_width1 <- process_data(original_data_with_new_race,c("octv_ezwdth_od", "octv_ezwdth_os"),"Baseline","EZ_width")
+
+
+#Randomized file is for ec_eye:  eligible for screening 
+Randomized<-original_data_with_new_race %>%
+   dplyr::filter(patient_id %in% r$patient_id)  %>% 
+   dplyr::select(patient_id,Age,Sex,Race,ec_eye.factor) %>% 
+   na.omit()
+  
+  
+eye_level_data <- Randomized %>%
+  left_join(Sphere, by = c("patient_id"))%>%
+  left_join(Central_Thickness, by = c("patient_id","OD_OS","redcap_event_name.factor"))%>%
+  left_join(Visual_Acuity, by = c("patient_id","OD_OS","redcap_event_name.factor")) %>% 
+  left_join(Mean_Sensitivity,by = c("patient_id", "OD_OS","redcap_event_name.factor")) %>% 
+  left_join(EZ_width,by = c("patient_id", "OD_OS","redcap_event_name.factor")) %>%
+  mutate(EZ_width_group = case_when(
+    EZ_width <= 2000 ~ "<=2000",
+    EZ_width > 2000 & EZ_width <= 3500 ~ ">2000-<=3500",
+    EZ_width > 3500 & EZ_width <= 6000 ~ ">3500-<=6000",
+    EZ_width > 6000 ~ ">6000",
+    TRUE ~ NA_character_  # Handle other cases if any
+  ))  %>% 
+# Filter out rows where ec_eye.factor is "OD only (right only)" and OD_OS is "OS";
+  filter(!(ec_eye.factor == "OD only (right only)" & OD_OS == "OS")) %>% 
+  filter(!(ec_eye.factor == "OS only (left only)" & OD_OS == "OD")) %>% 
+  select(!starts_with("redcap_event_name.factor")) %>% 
+  unique()%>%
+   # Remove rows where all specified variables are missing or empty and patient_id is in withdrwal list; i.e. if withdrwal, but they have data submitted then we still can use that data, but if do not have data come in, then the withdraw patient are removed.
+  filter(!(
+    patient_id %in% w$patient_id &
+    (is.na(Sphere) | Sphere == "") &
+    (is.na(Central_Thickness) | Central_Thickness == "") &
+    (is.na(Visual_Acuity) | Visual_Acuity == "") &
+    (is.na(Mean_Sensitivity) | Mean_Sensitivity == "") &
+    (is.na(EZ_width) | EZ_width == "")
+  ))
+
+ 
+
+#Randomized1 file is for rd_eye.factor:  eligible for Randomized patients; 
+Randomized1<-original_data_with_new_race %>%
+   dplyr::filter(patient_id %in% r$patient_id)  %>% 
+   dplyr::select(patient_id,Age,Sex,Race,rd_eye.factor) %>% 
+   na.omit() %>% 
+  mutate(Age = as.numeric(Age))
+ 
+
+eye_level_data1 <- Randomized1 %>%
+  left_join(Sphere1, by = c("patient_id"))%>%
+  left_join(Central_Thickness1, by = c("patient_id","OD_OS","redcap_event_name.factor"))%>%
+  left_join(Visual_Acuity1, by = c("patient_id","OD_OS","redcap_event_name.factor")) %>% 
+  left_join(Mean_Sensitivity1,by = c("patient_id", "OD_OS","redcap_event_name.factor")) %>% 
+  left_join(EZ_width1,by = c("patient_id", "OD_OS","redcap_event_name.factor")) %>%
+  mutate(EZ_width_group = case_when(
+    EZ_width <= 2000 ~ "<=2000",
+    EZ_width > 2000 & EZ_width <= 3500 ~ ">2000-<=3500",
+    EZ_width > 3500 & EZ_width <= 6000 ~ ">3500-<=6000",
+    EZ_width > 6000 ~ ">6000",
+    TRUE ~ NA_character_  # Handle other cases if any
+  ))  %>% 
+# Filter out rows where ec_eye.factor is "OD only (right only)" and OD_OS is "OS";
+  filter(!(rd_eye.factor == "OD only (right only)" & OD_OS == "OS")) %>% 
+  filter(!(rd_eye.factor == "OS only (left only)" & OD_OS == "OD")) %>% 
+  select(!starts_with("redcap_event_name.factor")) %>% 
+  unique()%>%
+  # Remove rows where all specified variables are missing or empty and patient_id is in withdrwal list; i.e. if withdrwal, but they have data submitted then we still can use that data, but if do not have data come in, then the withdraw patient are removed.
+  filter(!(
+    patient_id %in% w$patient_id &
+    (is.na(Sphere) | Sphere == "") &
+    (is.na(Central_Thickness) | Central_Thickness == "") &
+    (is.na(Visual_Acuity) | Visual_Acuity == "") &
+    (is.na(Mean_Sensitivity) | Mean_Sensitivity == "") &
+    (is.na(EZ_width) | EZ_width == "")
+  ))
+
+#GET THIS TABLE FOR HISTORICAL STUDY;
+# For_hist<- eye_level_data1 %>% filter(patient_id %in% c("1201", "1202", "1203", "1204", "1205", "1209", "1211", "1214", "1216", "1218", "1220", "1225", "1226", "1232" )) %>% 
+#   # select(patient_id,OD_OS,Visual_Acuity,Mean_Sensitivity,EZ_width) %>% 
+#   left_join(original_data_with_new_race %>% select(patient_id,en_visitdt) %>% na.omit(), by= "patient_id") %>% 
+#   filter( en_visitdt != '') %>% unique()
+# write.csv(For_hist,"redcap_data_for_history_study.csv")
+ 
+ 
+eye_level_data %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      ),
+      patient_id ~ "{n_distinct}"
+    )
+  ) %>% 
+modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    all_stat_cols() ~ "** Note: N is the eligible eyes **"
+  ) %>%
+  modify_caption("**Table : Summary of Randomized Patients Eye Level Data(Screening Form)**") %>%
+  bold_labels()
+
+ 
+# eye_level_data %>% filter(is.na(Mean_Sensitivity)) %>% select(patient_id,ec_eye.factor,OD_OS,Mean_Sensitivity)
+```
+## **Table 1: Summary of Eye Level Data Among Randomized Patients**(Note:N is the total rows in the eye level dataset,i.e. Repeated Measure Data. Ineligible patients and eyes are excluded in the samples)
+
+## Summary of Randomized Patients Eye Level Data(Baseline Form)
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+ eye_level_data1 %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      ),
+      patient_id ~ "{n_distinct}"
+    )
+  ) %>% 
+modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    all_stat_cols() ~ "** Note: N is the eligible eyes **"
+  ) %>%
+  modify_caption("**Table : Summary of Randomized Patients Eye Level Data(Baseline Form)**") %>%
+  bold_labels()
+
+
+ 
+``` 
+
+## Table: Comprehensive Overview for Randomized Patients(Note: Patient level data, all of the ineligible eye numerical values are set to NA)
+## Summary of Randomized Patient Level Data(Screening Form)
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+screen_eligible_var <- c("Age", "Sex", "Race","ec_eye.factor","va_sphere_od", "va_sphere_os", "va_spheresign_od", "va_spheresign_os","va_etdrs_od", "va_etdrs_os", "mps_sens_od", "mps_sens_os", "oct_cst_od", "oct_cst_os") 
+
+
+table1<-  original_data_with_new_race %>%
+  select(patient_id, all_of(screen_eligible_var), all_of(outcome)) %>%
+  filter(patient_id %in% r$patient_id) %>% 
+  filter(ec_eye.factor != "") %>% 
+# each patient has one row; if variable indicate right eye only, then we need set value for all left eye to be NA;
+  mutate(across(ends_with("od"), ~if_else(ec_eye.factor == "OS only (left only)", NA_real_, as.numeric(.)))) %>% 
+  mutate(across(ends_with("os"), ~if_else(ec_eye.factor == "OD only (right only)", NA_real_, as.numeric(.))))
+
+
+#Note:nac10_sdoct and nac29_sdoct both have Central Thickness 
+
+table1 %>%
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      ),
+      patient_id ~ "{n_distinct}"
+    )
+  ) %>%  
+modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    all_stat_cols() ~ "** Note: Ineligible eye numerical values are set to NA **"
+  ) %>%
+  modify_caption("**Table : Summary of Randomized Patient Level Data(Screening Form)**") %>%
+  bold_labels() 
+```
+
+## Table: Comprehensive Overview for Randomized Patients(Note: Patient level data, all of the ineligible eye numerical values are set to NA)
+
+## Summary of Randomized Patient Level Data(Baseline Form)
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+ 
+# gt_table <- as_gt(
+#   table1 %>%  
+#   tbl_summary(
+#     statistic = list(
+#       all_continuous() ~ "{mean} ({sd}),{min}~{max},{IQR}",
+#       patient_id ~ "{n_distinct}"
+#     )
+#   ))
+# 
+# gt_table 
+# gt_table %>%
+#   gt::gtsave("table5.html")
+# gt_table %>%
+#   gt::gtsave("table5.pdf")
+
+# gt_table %>%
+#   gt::gtsave(paste0("table one ", Sys.Date(), ".pdf"))
+
+
+final_eligible_var <- c("Age", "Sex", "Race","vav_sphere_od", "vav_sphere_os", "vav_spheresign_od", "vav_spheresign_os","vav_etdrs_od", "vav_etdrs_os", "mpv_sens_od", "mpv_sens_os", "sdoct_cst_od", "sdoct_cst_os","rd_eye.factor") 
+
+table2 <-  original_data_with_new_race %>%
+  select(patient_id, all_of(final_eligible_var), all_of(final_outcome)) %>%
+  filter(patient_id %in% r$patient_id)%>%
+  filter(rd_eye.factor != "" ) %>%   #rd_eye.factor != "" will get 
+  mutate(across(ends_with("od"), ~if_else(rd_eye.factor == "OS only (left only)", NA_real_, as.numeric(.)))) %>% 
+  mutate(across(ends_with("os"), ~if_else(rd_eye.factor == "OD only (right only)", NA_real_, as.numeric(.))))
+
+
+
+table2 %>%
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      ),
+      patient_id ~ "{n_distinct}"
+    )
+  ) %>%  
+modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    all_stat_cols() ~ "** Note: Ineligible eye numerical values are set to NA **"
+  ) %>%
+  modify_caption("**Table : Summary of Randomized Patient Level Data(Baseline Form)**") %>%
+  bold_labels() 
+ 
+```
+
+## Correlation Coefficient (Screening Form)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+#################################
+# Screening Form
+print("Mean_Sensitivity for OD and OS")
+calculate_correlation_with_ci(table1$mps_sens_od, table1$mps_sens_os) %>% kable()
+
+print("Central_Thickness for OD and OS")
+calculate_correlation_with_ci(table1$oct_cst_od, table1$oct_cst_os) %>% kable()
+
+print("Visual_Acuity for OD and OS")
+calculate_correlation_with_ci(table1$va_etdrs_od, table1$va_etdrs_os) %>% kable()
+
+print("EZ_width for OD and OS")
+calculate_correlation_with_ci(table1$octs_ezwdth_od, table1$octs_ezwdth_os) %>% kable()
+```
+
+## Correlation Coefficient (Baseline Form)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+###################################
+# Baseline Form
+####################################
+print("Mean_Sensitivity for OD and OS")
+calculate_correlation_with_ci(table2$mpv_sens_od, table2$mpv_sens_os) %>% kable()
+
+print("Central_Thickness for OD and OS")
+calculate_correlation_with_ci(table2$sdoct_cst_od, table2$sdoct_cst_os) %>% kable()
+
+print("Visual_Acuity for OD and OS")
+calculate_correlation_with_ci(table2$vav_etdrs_od, table2$vav_etdrs_os) %>% kable()
+
+print("EZ_width for OD and OS")
+calculate_correlation_with_ci(table2$octv_ezwdth_od, table2$octv_ezwdth_os) %>% kable()
+
+ 
+
+
+
+corr_data<- eye_level_data1 %>% 
+  dplyr::select(EZ_width,Visual_Acuity,Mean_Sensitivity) %>% na.omit()
+
+corr <- round(cor(corr_data), 2)
+
+
+ggcorrplot(corr, hc.order = TRUE, type = "lower",
+   lab = TRUE)
+
+ggcorrplot(corr, hc.order = TRUE, type = "upper",
+   lab = TRUE)
+
+ggcorrplot(corr,lab = TRUE)
+
+
+
+
+
+```
+
+## Scatterplots (Screening Form)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+Scatter<- eye_level_data %>% 
+  dplyr::select(EZ_width,Visual_Acuity,Mean_Sensitivity,OD_OS) 
+
+p <- ggplot(Scatter, aes(EZ_width, Visual_Acuity)) + geom_point()+
+  labs(title = "Relationship Between EZ Width and Visual Acuity",
+       x = "EZ Width", y = "Visual Acuity")
+p
+
+
+p1 <- ggplot(Scatter, aes(EZ_width, Mean_Sensitivity))+ geom_point()+
+  labs(title = "Relationship Between EZ Width and Mean Sensitivity",
+       x = "EZ Width", y = "Mean_Sensitivity")
+p1
+
+
+p2 <- ggplot(Scatter, aes(Visual_Acuity, Mean_Sensitivity)) + geom_point()+
+  labs(title = "Relationship Between VA and Mean Sensitivity",
+       x = "Visual_Acuity", y = "Mean_Sensitivity")
+p2
+
+```
+
+## Scatterplots (Baseline Form)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+Scatter1<- eye_level_data1 %>% 
+  dplyr::select(EZ_width,Visual_Acuity,Mean_Sensitivity,OD_OS) 
+
+p <- ggplot(Scatter1, aes(EZ_width, Visual_Acuity)) + geom_point()+
+  labs(title = "Relationship Between EZ Width and Visual Acuity",
+       x = "EZ Width", y = "Visual Acuity")
+p
+
+
+p1 <- ggplot(Scatter1, aes(EZ_width, Mean_Sensitivity))+ geom_point()+
+  labs(title = "Relationship Between EZ Width and Mean Sensitivity",
+       x = "EZ Width", y = "Mean_Sensitivity")
+p1
+
+
+p2 <- ggplot(Scatter1, aes(Visual_Acuity, Mean_Sensitivity)) + geom_point()+
+  labs(title = "Relationship Between VA and Mean Sensitivity",
+       x = "Visual_Acuity", y = "Mean_Sensitivity")
+p2
+
+```
+
+## Fail Reasons(refer attached csv file : "fail_reasons.csv")
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+fail<- original_data_with_new_race %>% 
+  dplyr::select("patient_id","redcap_data_access_group","en_version",	"en_visitdt",	"en_site_preeligible",	"en_preeye",	"en_prescreenfail_sp",	"en_cert_preeligible",	"en_prescreendt",	"en_site_eligible",	"en_eye",	"en_faildt",	"en_screenfail_sp",	"en_cert_eligible",	"en_screendt",	"en_notes",	"er_eligible",	"er_ineligiblesp",	"er_eye",	"er_inelig_os",	"er_inelig_od",	"er_cert",	"er_formdt",	"ec_chair_eye",	"ec_rc_eye",	"ec_eligible",	"ec_eye",	"ec_confirm",	"octs_ezwdth_od",	"octs_ezwdth_os",	"octs_eli_os",	"octs_comments_os","octs_comments_od","rd_pi","rd_rz_accept","hgi_pseen_before") %>%  
+   # mutate(
+   #  en_visitdt = as.Date(as.character(en_visitdt), format = "%Y-%m-%d"),
+   #  en_prescreendt = as.Date(as.character(en_prescreendt), format = "%Y-%m-%d"),
+   #  en_screendt = as.Date(as.character(en_screendt), format = "%Y-%m-%d"),
+   #  er_formdt = as.Date(as.character(er_formdt), format = "%Y-%m-%d"),
+   #  en_visitdt = ave(en_visitdt, cumsum(!is.na(en_visitdt)), FUN = function(x) x[1]),
+   #  en_prescreendt = ave(en_prescreendt, cumsum(!is.na(en_prescreendt)), FUN = function(x) x[1]),
+   #  en_screendt = ave(en_screendt, cumsum(!is.na(en_screendt)), FUN = function(x) x[1]),
+   #  er_formdt = ave(er_formdt, cumsum(!is.na(er_formdt)), FUN = function(x) x[1]) ) %>%
+group_by(patient_id) %>% distinct() %>% 
+filter(patient_id %in% (sample %>% filter(category == 'ineligible') %>% pull(patient_id)))  %>% 
+distinct(patient_id, .keep_all = TRUE)   # Keep only the first row of each patient_id
+
+
+
+# write.csv(fail,paste0("fail_reasons_",today(),".csv"))
+
+```
+
+
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+## Screening Pipeline Summary Table (Not showing)
+
+# Create a summary dataframe with total counts for each column
+redcap_var<- c("redcap_repeat_instrument","redcap_repeat_instance")
+
+summary_data <- P %>%
+  summarise(across(everything(), list(Count = ~ sum(!is.na(.) & . != "")))) %>%
+  mutate(across(everything(), ~ paste0(., " Patient(s)")))%>%
+  mutate(across(everything(), as.character))
+
+ # Rename summary_data variables to match P
+colnames(summary_data) <- colnames(P)
+
+summary_data <- bind_rows(P, summary_data) %>%
+  mutate_all(~ ifelse(is.na(.), "", as.character(.)))
+
+pipeline <- t(summary_data) 
+
+ # view(summary_data)
+# write.csv(pipeline,"pipeline.csv",col.names = TRUE)
+# write.csv(summary_data,"pipeline_wide_format.csv",col.names = TRUE)
+
+```
+
+## Validate the Certification Tracker's Authenticity and Report Detected Issues(refer weekly report)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# Note: MP: `maia mp quiz` == 'P' and  `mp scan report` == 'P' both need to be 'P'(Pass) to be valid certification number;   BCVA: Visit Date in Redcap BCVA Form need to between the two dates of  `bcva_certification_date` and `expiration date` to be valid;  How to download the Certification Tracker?   Go to teams, NAC Attack Study US Site, choose CC, Files, the file name is "Certification Tracker.xlsx";
+
+
+
+#nac47 2g. Certification number of the staff member who dispensed the drug:; check if "psmd_outgoing_cert1","psmd_outgoing_cert2" not missing and not 99999 ; as well as staff_drugdist_pass has a pass; same for NAC19
+NAC47_cert_in_redcap<-c("psmd_outgoing_cert1","psmd_outgoing_cert2") 
+NAC47_staff_drugdist_pass<-c("staff_drugdist_pass")  #Drug Dispensing Quiz Pass/Fail
+
+NAC19_cert_redcap<-c("br_studyinv_cert") #Study Investigator Certification Number:
+NAC19_staff_medlicense<-c("staff_medlicense")  # `staff_medlicense` doesn't exist in the clinical within staff; Q: Does staff member have a medical license(Yes or No question);
+
+#######################################################################################
+###select all of the Certification number of the staff member who dispensed the drug , and Study_Investigator_Certification_Number
+#######################################################################################
+
+cert1 <- original_data_with_new_race %>%
+  dplyr::select(patient_id, psmd_outgoing_cert1,psmd_outgoing_cert2) %>%  
+  group_by(patient_id) %>% 
+  filter(!is.na(psmd_outgoing_cert1)|!is.na(psmd_outgoing_cert2))
+
+cert2 <- original_data_with_new_race %>%
+  dplyr::select(patient_id, br_studyinv_cert) %>%
+  group_by(patient_id) %>% 
+  filter(!is.na(br_studyinv_cert))
+
+cert3<- cert1 %>% left_join(cert2,by="patient_id") %>% mutate(across(everything(), as.character))
+
+
+#######################################################################################
+# clinical_level; note, staff_medlicense is not ready yet; 
+# `staff_medlicense` doesn't have entry data in the clinical data; Q: Does staff member have a medical license(Yes or No question);
+#######################################################################################
+
+clinical_level<- read.csv(clinical_filename)
+ 
+
+certification<- clinical_level %>%
+  dplyr::select(staff_drugdist_pass, 
+                staff_medlicense,
+                staff_medlicense_expdt,
+                `certification number`=staff_cert_num,
+                `date of bcva certification`=staff_bcva_date1,
+                `date of bcva certification2`=staff_bcva_date2,
+                `date of bcva certification3`=staff_bcva_date3,
+                `date of bcva certification4`=staff_bcva_date4,
+                `maia mp quiz`=staff_mpquiz_pass,
+                `mp scan report`=staff_mpscanreport_pass) %>%
+ mutate(`expiration date` = as.Date(`date of bcva certification`) + years(1),
+        `expiration date2` = as.Date(`date of bcva certification2`) + years(1),
+        `expiration date3` = as.Date(`date of bcva certification3`) + years(1),
+        `expiration date4` = as.Date(`date of bcva certification4`) + years(1)
+        ) %>%
+ mutate(across(everything(), as.character))  %>%
+ rename_all(tolower)
+
+
+#######################################################################################
+# certification_variable_in_redcap, all of the variables for certfication are added in this file; only use patient is eligible sample
+#######################################################################################
+
+certification_variable_in_redcap<- c("patient_id","va_visitdt","va_cert","mps_tech_cert")
+
+certification_redcap<- original_data_with_new_race %>%
+  dplyr::select(all_of(certification_variable_in_redcap)) %>% 
+  filter(va_visitdt != "") %>% 
+  # mutate(across(everything(), as.character)) %>%  
+  # full_join(mutate(cert3, patient_id = as.character(patient_id)), by = "patient_id")
+  full_join(cert3, by = "patient_id") %>% 
+  filter(patient_id %in% e$patient_id) 
+
+
+
+#######################################################################################
+# dispensed_drug_CERT : merge certification_variable_in_redcap and clinical data together
+#######################################################################################
+
+
+#check if NAC19 Study Investigator Certification Number has medical license or not; waiting for Izzie to fill the staff_medlicense in the clinical data ;
+medical_license <- 
+ certification_redcap %>%
+  select(patient_id, br_studyinv_cert) %>%
+  left_join(
+    certification %>%
+      select(`certification number`,staff_medlicense,staff_medlicense_expdt),
+    by = c("br_studyinv_cert" = "certification number") ) %>% 
+  filter(!is.na(br_studyinv_cert)) 
+
+ 
+#psmd_outgoing_cert1 merge with clinical to check if certficatin for durg dispenser is pass or not.
+ 
+dispensed_drug_CERT1 <- original_data_with_new_race %>%
+  select(patient_id, psmd_outgoing_cert1,psmd_outgoing_cert1nm) %>% 
+  unique()%>%
+  mutate(psmd_outgoing_cert1=as.character(psmd_outgoing_cert1)) %>% 
+  left_join(
+    certification %>%
+      select(`certification number`, staff_drugdist_pass1=staff_drugdist_pass),
+    by = c("psmd_outgoing_cert1" = "certification number")
+  ) %>% 
+  filter(!is.na(psmd_outgoing_cert1) ) %>% 
+mutate(
+    dispensed_drug_valid_cert1 = case_when(
+      (staff_drugdist_pass1 == 'P' & !is.na(psmd_outgoing_cert1) & !is.na(psmd_outgoing_cert1nm))  ~ 'Certification for drug dispenser is valid',
+       staff_drugdist_pass1 != 'P'  ~ '! Drug Dispensing Quiz Not Pass',
+      psmd_outgoing_cert1== '99999' & !is.na(psmd_outgoing_cert1nm) ~ 'Certification for drug dispenser is valid',
+      TRUE ~ "Warning"))
+
+
+#psmd_outgoing_cert2 merge with clinical to check if certficatin for durg dispenser is pass no not.
+dispensed_drug_CERT2 <- original_data_with_new_race %>%
+  select(patient_id, psmd_outgoing_cert2,psmd_outgoing_cert2nm) %>% 
+  unique()%>%
+  mutate(psmd_outgoing_cert2=as.character(psmd_outgoing_cert2)) %>% 
+  left_join(
+    certification %>%
+      select(`certification number`, staff_drugdist_pass2=staff_drugdist_pass),
+    by = c("psmd_outgoing_cert2" = "certification number")
+  ) %>% 
+  filter(!is.na(psmd_outgoing_cert2) ) %>% 
+mutate(
+    dispensed_drug_valid_cert2 = case_when(
+      (staff_drugdist_pass2 == 'P' & !is.na(psmd_outgoing_cert2) & !is.na(psmd_outgoing_cert2nm))  ~ 'Certification for drug dispenser is valid',
+       staff_drugdist_pass2 != 'P'  ~ '! Drug Dispensing Quiz Not Pass',
+      psmd_outgoing_cert2== '99999' & !is.na(psmd_outgoing_cert2nm) ~ 'Certification for drug dispenser is valid',
+      TRUE ~ "Warning"))
+
+
+#add all result together and use this file for output weekly report; 
+dispensed_drug_CERT<-dispensed_drug_CERT1 %>% 
+  full_join(dispensed_drug_CERT2,by = "patient_id") %>%
+  left_join(medical_license,by="patient_id") %>% 
+  mutate(medical_license_valid = case_when(
+    staff_medlicense == "1" & ( as.Date(staff_medlicense_expdt) >= today() )~ "Medical License is valid",
+    staff_medlicense == "1" & ( as.Date(staff_medlicense_expdt) <= today() )~  "Medical License Expired",
+    TRUE ~ "!No Medical License"
+  ))
+
+
+June_6<- c("1801", "1803", "1901", "1902", "2908", "2910", "2911", "2913", "2915", "2917", "2918", "2919", "2920", "2923", "3401", "3403", "3404", "3405", "3406")  
+
+
+##this cert_drug_dispenser is use during the weekly meeting;
+cert_drug_dispenser<-dispensed_drug_CERT %>% 
+  filter(dispensed_drug_valid_cert1 != 'Certification for drug dispenser is valid' & 
+         dispensed_drug_valid_cert2 != 'Certification for drug dispenser is valid' ) %>% 
+  dplyr::select(-br_studyinv_cert,-staff_medlicense,-staff_medlicense_expdt,-medical_license_valid) %>% unique() %>% 
+  mutate(Notes_Discussed_Date = ifelse(patient_id %in% June_6,"2024-06-06",NA))
+
+
+# print out the discussed IDs
+
+# cat(cert_drug_dispenser %>% 
+#   pull(patient_id) %>% 
+#   paste0('"', ., '"') %>% 
+#   toString(), "\n")
+
+
+view(cert_drug_dispenser)
+
+
+#this is for weekly meeting discussion
+medical_license_check<- dispensed_drug_CERT %>% 
+  dplyr::select(patient_id,br_studyinv_cert,staff_medlicense,staff_medlicense_expdt,medical_license_valid) %>% 
+  filter(!medical_license_valid %in% c("Medical License is valid"))%>% unique()
+  
+# view(medical_license_check)
+
+#######################################################################################
+# merge  BCVA_CERT ,MP_CERT from certification_variable_in_redcap and clinical data together
+#######################################################################################
+
+BCVA_CERT <- certification_redcap %>%
+  select(patient_id, va_cert, va_visitdt) %>%
+  mutate(across(everything(), as.character)) %>%
+  left_join(certification, by = c("va_cert" = "certification number")) %>%
+  mutate(
+    BCVA_valid = case_when(
+      !is.na(va_visitdt) & !is.na(`date of bcva certification`) & 
+        va_visitdt >= `date of bcva certification` & va_visitdt < `expiration date` ~ "BCVA Certification Valid",
+      !is.na(va_visitdt) & !is.na(`date of bcva certification2`) & 
+        va_visitdt >= `date of bcva certification2` & va_visitdt < `expiration date2` ~ "BCVA Certification Valid",
+      !is.na(va_visitdt) & !is.na(`date of bcva certification3`) & 
+        va_visitdt >= `date of bcva certification3` & va_visitdt < `expiration date3` ~ "BCVA Certification Valid",
+      !is.na(va_visitdt) & !is.na(`date of bcva certification4`) & 
+        va_visitdt >= `date of bcva certification4` & va_visitdt < `expiration date4` ~ "BCVA Certification Valid",
+      (is.na(`date of bcva certification`) | `date of bcva certification` == "") & 
+      (is.na(`date of bcva certification2`) | `date of bcva certification2` == "") & 
+      (is.na(`date of bcva certification3`) | `date of bcva certification3` == "") & 
+      (is.na(`date of bcva certification4`) | `date of bcva certification4` == "") ~ "Warning: Certification Date Missing",
+      TRUE ~ "Warning: BCVA Certification date outside of the visit date"
+    ),
+    Report_date = Sys.Date(),
+    month_to_expire = round(as.numeric(difftime(as.Date(`expiration date`), Sys.Date(), units = "days") / 30), 0),
+    expire_soon = ifelse(month_to_expire <= 3, "Warning: less than 3 months to expire.", "No")
+  ) %>%
+  select(-`maia mp quiz`, -`mp scan report`) %>% 
+  unique() %>% 
+  filter( va_cert !="" & !is.na(va_cert))
+  
+
+
+
+MP_CERT<- certification_redcap %>%
+  dplyr::select(patient_id,mps_tech_cert) %>%
+   mutate(across(everything(), as.character)) %>% 
+  left_join(certification, by = c("mps_tech_cert" = "certification number"))%>%
+  unique() %>% 
+  mutate(
+    MP_valid = case_when(
+      (`maia mp quiz` == 'P' & `mp scan report` == 'P') ~ 'MP Certification Valid',
+      `maia mp quiz` != 'P' ~ 'Warning: MP Certification did not pass',
+      `mp scan report` != 'P' ~ 'Warning: mp scan report did not pass',
+      TRUE ~ "Warning")) %>%
+  dplyr::select(patient_id,mps_tech_cert,`maia mp quiz`,`mp scan report`,MP_valid) %>% 
+  filter(mps_tech_cert !=""&!is.na(mps_tech_cert) )
+
+
+# certification_check_results<-  BCVA_CERT %>% full_join(MP_CERT,by=c("patient_id")) %>% 
+#   mutate(Notes = ifelse(patient_id %in% c('2201','1902','3406') , 'Discussed', NA))
+
+certification_check_results<-  BCVA_CERT %>%
+  full_join(MP_CERT,by=c("patient_id")) %>% 
+  mutate(Notes = ifelse(patient_id %in% patient_id_discussed_for_certification , 'Discussed', "New Case")) 
+
+# view(certification_check_results)
+
+cert_BCVA_MP<- certification_check_results %>% 
+  filter(!BCVA_valid %in% c("BCVA Certification Valid") | !MP_valid %in% c("MP Certification Valid")) %>%
+  filter(!Notes %in% "Discussed")
+
+view(cert_BCVA_MP)
+
+
+BCVA_ISSUE<-cert_BCVA_MP %>% filter(BCVA_valid != "BCVA Certification Valid") %>% 
+  select(va_cert,patient_id,BCVA_valid)
+
+MP_ISSUE<-cert_BCVA_MP %>% filter(MP_valid != "MP Certification Valid") %>% 
+  select(mps_tech_cert,patient_id,MP_valid)  %>% 
+  filter(!is.na(mps_tech_cert))
+
+view(BCVA_ISSUE)
+view(MP_ISSUE)
+
+# print(paste("BCVA Certification Number: ",BCVA_ISSUE$va_cert, BCVA_ISSUE$BCVA_valid))
+# print(paste("MP Certification Number: ",MP_ISSUE$mps_tech_cert,MP_ISSUE$MP_valid))
+
+
+# BCVA_CERT filtering code
+bcva_table <- BCVA_CERT %>% filter(!BCVA_valid %in% c("BCVA Certification Valid"))
+# MP_CERT filtering code
+mp_table <- MP_CERT %>% filter(!MP_valid %in% c("MP Certification Valid"))
+
+# Print tables using kable
+# print(kable(bcva_table), row.names = FALSE)
+# 
+# print(kable(mp_table), row.names = FALSE)
+
+#################################################################################################### 
+## check certification_room expiration date from clinical 
+####################################################################################################
+ 
+certification_room <- clinical_level %>%
+  dplyr::select(redcap_data_access_group, starts_with("room")) %>% 
+  filter(
+    rowSums(!is.na(across(starts_with("room_bcva_date"), as.character)) & 
+            across(starts_with("room_bcva_date"), ~ . != '')) > 0
+  )%>% 
+  mutate(
+        `expiration date1` = as.Date(room_bcva_date1) + years(1),
+        `expiration date2` = as.Date(room_bcva_date2) + years(1),
+        `expiration date3` = as.Date(room_bcva_date3) + years(1),
+        `expiration date4` = as.Date(room_bcva_date4) + years(1),
+          report_date = today(),
+          month_to_expire1 = round(as.numeric(interval(today(), `expiration date1`) / months(1)),0),
+          expire_soon1 = ifelse(month_to_expire1 <= 3, "! Warning: less than 3 months to expire.","NO, more than 3 months to expire."),
+        month_to_expire2 = round(as.numeric(interval(today(), `expiration date2`) / months(1)),0),
+          expire_soon2 = ifelse(month_to_expire2 <= 3, "! Warning: less than 3 months to expire.","NO, more than 3 months to expire."),
+        month_to_expire3 = round(as.numeric(interval(today(), `expiration date3`) / months(1)),0),
+          expire_soon3 = ifelse(month_to_expire3 <= 3, "! Warning: less than 3 months to expire.","NO, more than 3 months to expire."),
+        month_to_expire4 = round(as.numeric(interval(today(), `expiration date4`) / months(1)),0),
+          expire_soon4 = ifelse(month_to_expire4 <= 3, "! Warning: less than 3 months to expire.","NO, more than 3 months to expire.") )%>%
+  mutate(across(everything(), as.character))  %>%
+  rename_all(tolower)  
+
+
+# Create a custom order vector for column names
+custom_order <- c("redcap_data_access_group","room_bcva_date1", "room_bcva_pass1",
+                  "expiration date1", "month_to_expire1", "expire_soon1",
+                  "room_bcva_date2", "room_bcva_pass2",
+                  "expiration date2", "month_to_expire2", "expire_soon2",
+                  "room_bcva_date3", "room_bcva_pass3",
+                  "expiration date3", "month_to_expire3", "expire_soon3",
+                  "room_bcva_date4", "room_bcva_pass4",
+                  "expiration date4", "month_to_expire4", "expire_soon4")
+
+# Arrange columns based on the custom order
+certification_room <- certification_room %>%
+  select(custom_order)
+
+# write.csv(certification_check_results,paste0("Personal_certification_check_results ", Sys.Date(), ".csv"))
+# write.csv(certification_room,paste0("Room_certification_expiration_results ", Sys.Date(), ".csv"))
+# write.csv(dispensed_drug_CERT,paste0("dispensed drug certification results ", Sys.Date(), ".csv"))
+
+
+
+# Create a list of data frames
+output_list <- list(
+  "Personal_Cert_Check_Results" = certification_check_results,
+  "Room_Cert_Expiration_Results" = certification_room,
+  "Dispensed_Drug_Certi_Results" = dispensed_drug_CERT
+)
+
+# Create a new Excel workbook and write all data frames to separate sheets
+# write.xlsx(output_list, file = paste0("Certification_Results_", Sys.Date(), ".xlsx"), 
+#            sheetName = names(output_list), rowNames = FALSE)
+
+```
+
+
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+## Baseline & NAC33 Randomization
+Baseline_outcome<-filter_data(original_data_with_new_race,"Baseline") %>% dplyr::select(all_of(demographic_variable),all_of(outcome))
+
+filter_data(original_data_with_new_race,"Baseline")
+#rd_eye incated The eligible eye(s) (study eye) 
+column_to_keep<- c("rd_eye.factor","rd_assignment.factor","rd_date")
+# Date of final eligibility determination can be used for determine for Randomization final eligibility,
+# without a valid date meaning the patient is not belong to Randomization_final_eligibility list;
+Randomization_final_eligibility <- Baseline %>%
+  # select(all_of(demographic_variable),starts_with("rd_")) 
+  dplyr::select(all_of(demographic_variable),column_to_keep,-redcap_var) %>% 
+  filter(!rd_date %in% "" ) %>%
+  dplyr::select(-patient_id, -rd_date, -redcap_event_name.factor)
+
+
+Random_table<- Randomization_final_eligibility  %>%
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      )))
+
+Randomization  <- Baseline %>%
+  # select(all_of(demographic_variable),starts_with("rd_")) 
+  dplyr::select(all_of(demographic_variable),column_to_keep,-redcap_var) %>% 
+  filter(!rd_date %in% "" ) %>%
+  dplyr::select(-patient_id, rd_date, -redcap_event_name.factor,-rd_date)  
+ 
+
+
+Randomization  <- Baseline %>%
+select(all_of(demographic_variable),starts_with("rd_")) %>%
+  dplyr::select(all_of(demographic_variable),column_to_keep,-redcap_var) %>%
+  filter(!rd_date %in% "" ) %>%
+  dplyr::select(-patient_id, rd_date, -redcap_event_name.factor) %>% filter(rd_date <= '2024-01-30') %>%
+  dplyr::select(-rd_date)
+
+# https://www.danieldsjoberg.com/gtsummary/articles/tbl_summary.html
+Jan13<-Randomization %>%
+ tbl_summary(
+   label = list(Age ~ "Age", rd_eye.factor ~ "Eligible Eye", rd_assignment.factor ~ "Assignment Group"),
+   type = all_continuous() ~ "continuous2",
+   statistic = list(
+       all_continuous() ~ c(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]" ))) %>%
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of Randomized by Jan 30,2024**") %>%
+  bold_labels()
+
+
+
+# Jan13 %>% as_gt() %>%
+#     gt::gtsave( "Summary of Randomized by Jan 30,2024.pdf")
+
+# Jan13 %>% as_gt() %>%
+#   gt::gtsave( "Summary of Randomized by Jan 30,2024.docx")
+
+ 
+ 
+```
+
+
+## nac44_adverse_event (refer Adverse Event csv file)  Note: The denominator for all AE summaries is the total number of AE events.
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+#these variables are from the log Form 
+ae_var<-c("ae_reportdt","ae_first_ae_date","ae_desc1","ae_desc2","ae_desc3","ae_severity_clinic.factor",
+          "ae_cause_clinic.factor","ae_cause_clinic_other.factor","ae_cause_clinic_other_sp",
+          "ae_sight.factor","ae_sae_clinic.factor","ae_chair_sae.factor","ae_event_managed",
+          "ae_fup1_resolvedt","ae_fup1_date","ae_fup1_eventstatus.factor","ae_severity_clinic","ae_chair_severity_ae",
+          "ae_severity_clinic.factor","ae_chair_severity_ae.factor")#ae_fup1_eventstatus:  Status of the event
+
+adverse_event_Jan13<- original_data_with_new_race %>% dplyr::select(all_of(demographic_variable),all_of(ae_var))%>% filter(redcap_repeat_instrument %in% c("nac44_adverse_event")) %>% 
+  dplyr::select(-redcap_var,-redcap_event_name.factor) %>% filter(ae_reportdt <= '2024-01-30')
+# 
+# write.csv(adverse_event_Jan13, paste0("Adverse Event by Jan 30th.csv"))
+
+adverse_event<- original_data_with_new_race %>% 
+  dplyr::select(all_of(demographic_variable),all_of(ae_var))%>% 
+  filter(redcap_repeat_instrument %in% c("nac44_adverse_event")) %>% 
+  dplyr::select(-redcap_var,-redcap_event_name.factor) 
+
+
+##sample ae is the total ae event 
+ae<- original_data_with_new_race %>% 
+    dplyr::select(patient_id,ae_nickdate,starts_with("ae")) %>% 
+    distinct() %>% 
+    filter(patient_id %in% e$patient_id)  %>% 
+    filter(!is.na(ae_nickdate) &  ae_nickdate != "")
+
+
+
+ae %>% 
+  dplyr::select(patient_id,ae_severity_clinic.factor,ae_chair_severity_ae.factor) %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      ),
+        patient_id ~ "{n_distinct}"
+    ),
+     type = list(
+      c(ae_severity_clinic.factor,ae_chair_severity_ae.factor) ~ "categorical" 
+    )
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**adverse_event_severity**") %>%
+  bold_labels() 
+
+
+
+
+ae %>% 
+  dplyr::select(patient_id,ae_cause_clinic.factor,ae_chair_rltd_sdrug.factor) %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      ),
+        patient_id ~ "{n_distinct}"
+    ),
+     type = list(
+      c(ae_cause_clinic.factor,ae_chair_rltd_sdrug.factor) ~ "categorical" 
+    )
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**AE related to the study drug as judged by the Study PI, physician, or Chair Office**") %>%
+  bold_labels() 
+
+
+
+
+ae %>% 
+dplyr::select(patient_id,ae_sight.factor,ae_chair_ae_medreview.factor,ae_medm_unexp_ae.factor) %>%
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      ),
+        patient_id ~ "{n_distinct}"
+    ),
+     type = list(
+      c(ae_sight.factor,ae_chair_ae_medreview.factor,ae_medm_unexp_ae.factor) ~ "categorical" 
+    )
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**AE sight-threatening, unexpected, or needs Medical Monitor review**") %>%
+  bold_labels() 
+
+
+
+
+ae %>% 
+dplyr::select(patient_id,ae_chair_ae_medreview.factor,ae_sae_clinic.factor,ae_chair_sae.factor,ae_medm_sae.factor)  %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      ),
+        patient_id ~ "{n_distinct}"
+    ),
+     type = list(
+      c(ae_sae_clinic.factor,ae_chair_ae_medreview.factor,ae_chair_sae.factor,ae_medm_sae.factor) ~ "categorical" 
+    )
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**SERIOUS adverse event**") %>%
+  bold_labels() 
+
+
+ae %>% 
+  dplyr::select(patient_id,ae_medm_severity_ae.factor) %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      ),
+        patient_id ~ "{n_distinct}"
+    ),
+     type = list(
+      c(ae_medm_severity_ae.factor) ~ "categorical" 
+    )
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**severity of the AE as determined by the Medical Monitor**") %>%
+  bold_labels() 
+
+
+# write.csv(adverse_event, paste0("Adverse Event by ", today(),".csv"))
+
+```
+
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+#function to get cross table
+create_tbl_cross <- function(dataset, row_var, col_var, dataset_name) {
+  tbl <- dataset %>%
+    tbl_cross(row = {{ row_var }}, col = {{ col_var }}) %>%
+    bold_labels()
+  assign(dataset_name, tbl, envir = .GlobalEnv)
+}
+ 
+### list all of the diff between chair and clinic 
+severity_ae<-ae %>% select(ae_nickdate,patient_id,ae_reportdt,ae_chair_severity_ae.factor, ae_severity_clinic.factor) %>% 
+  mutate(check=ifelse(ae_chair_severity_ae.factor==ae_severity_clinic.factor,"same","diff")) %>% 
+  filter(check=="diff")  
+  
+ 
+ae_cause<- ae %>% select(ae_nickdate,patient_id,ae_reportdt,ae_chair_rltd_sdrug.factor,ae_cause_clinic.factor) %>% 
+  mutate(check=ifelse(ae_chair_rltd_sdrug.factor==ae_cause_clinic.factor,"same","diff")) %>% 
+  filter(check=="diff")  
+  
+```
+
+## AE cross table for severity
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+create_tbl_cross(ae, ae_chair_severity_ae.factor, ae_severity_clinic.factor, "tbl_cross1")
+
+as_gt(tbl_cross1)
+
+```
+
+## AE cross table for study drug as judged by the Study Chair Office VS. Study PI(or designated responsible physician)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+create_tbl_cross(ae,ae_chair_rltd_sdrug.factor,ae_cause_clinic.factor,"tbl_cross2")
+as_gt(tbl_cross2)
+
+```
+
+## AE summary statistics
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+# number_of_event and from how many unique patient; each patient reported event(groupby) then summary min max median 25% 75%; give a table;
+
+ae %>% 
+  filter(!is.na(ae_version) | ae_version != "") %>% 
+  summarise(number_of_ae_event = n(),
+            unique_patient = n_distinct(patient_id)) %>% full_join(
+ae %>% 
+  filter(!is.na(ae_version)) %>% 
+  group_by(patient_id) %>% 
+  summarise(event_count = n()) %>% 
+  summarise(
+    min_event = min(event_count),
+    max_event = max(event_count),
+    median = median(event_count),
+    Q1 = quantile(event_count, 0.25),
+    Q3 = quantile(event_count, 0.75)
+  ), by = character() ) %>% kable()
+
+
+```
+
+## NAC16 Historical Data Submission
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+## Historical NAC16
+
+## Multi table:Total 5 var variables are two categories each(yes or no)and for the site variable with now 8 categorical. the multi-way table to represent all possible combinations, the number of rows in the table would be the product of the number of categories for each variables. N = 2*2*2*2*2*8 = 256 include site. N without site: N = 2^5 =32 
+
+var <- c("Sex",  "Race",   "Age" ,"hds_erg", "hds_erg_od_os.factor","hds_visual_frpt","hds_visual_frpt_od","hds_visual_frpt_os","hds_microp", "hds_microp_od","hds_microp_os","hds_sdoct","hds_sdoct_od","hds_sdoct_os","hds_fund_auto","hds_fund_auto_od","hds_fund_auto_os","hds_pseen_before")
+
+hist<- Screening %>% dplyr::select(all_of(demographic_variable),starts_with("hds")&!ends_with("factor"))%>% filter(!redcap_repeat_instance %in% c(1,2)) %>% dplyr::select(-redcap_event_name.factor)
+
+historical<- Screening %>% dplyr::select(all_of(demographic_variable),all_of(var)) %>% filter(!redcap_repeat_instance %in% c(1,2))%>%
+dplyr::select(-redcap_var,-patient_id,-redcap_event_name.factor)  
+# TableSummary(var, "Sex", historical)
+
+# historical %>%  tbl_summary( statistic = list(all_continuous() ~ "{mean} ({sd}),{min}~{max}")) 
+
+# TableSummary(var, "hds_erg", historical)
+
+var <- c("hds_erg.factor", "hds_visual_frpt.factor", "hds_microp.factor", "hds_sdoct.factor", "hds_fund_auto.factor")
+
+ 
+# Select variables and site from the data frame
+multi <- Screening %>% 
+  dplyr::select(redcap_data_access_group, all_of(var))%>%
+  mutate(hds_erg.factor = case_when(
+    hds_erg.factor == "Yes {hds_erg_od_os}" ~ "Yes",
+    TRUE ~ hds_erg.factor
+  )) %>% unique() %>% na.omit()
+
+# Create a multi-way table
+multi_table <- table(multi[,var])  
+# view(multi_table)
+
+
+# Create a multi-way table by redcap_data_access_group
+multi_table_by_site <- table(multi[, c("redcap_data_access_group", var)])  
+# Convert the table to a data frame
+multi_df <- as.data.frame(multi_table_by_site)
+# Order the data frame by frequency
+multi_df <- multi_df[order(-multi_df$Freq), ]
+# 
+# view(multi_df)
+
+
+
+
+NAC16_OCT<-original_data_with_new_race %>% select(patient_id,hds_sdoct,hds_sdoct_od.factor,hds_time_od_sdoct,hds_sdoct_os.factor,hds_time_os_sdoct) %>% na.omit() %>% full_join(sample %>% select(patient_id), by = "patient_id" )
+
+
+random_id<- sample %>% mutate(random = ifelse(rd_assignment.factor != '' | !is.na(rd_assignment.factor) ,"Yes","No")) %>% 
+  filter(random=="Yes")
+  
+  
+  
+NAC16_OCT %>% 
+ tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]" ),
+      patient_id ~ "{n_distinct}"),
+    type = list(
+      c(hds_sdoct_od.factor, hds_sdoct_os.factor) ~ "categorical",
+      c(hds_time_od_sdoct,hds_time_os_sdoct) ~ "continuous"
+  )) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of historical_data_submission for All Patients **") %>%
+  bold_labels() 
+
+ 
+NAC16_OCT %>% filter(patient_id %in% random_id$patient_id) %>% 
+   tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]" ),
+      patient_id ~ "{n_distinct}"),
+    type = list(
+      c(hds_sdoct_od.factor, hds_sdoct_os.factor) ~ "categorical",
+      c(hds_time_od_sdoct,hds_time_os_sdoct) ~ "continuous"
+  )) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of historical_data_submission for Randomized Patients **") %>%
+  bold_labels() 
+
+
+
+
+
+# write.csv(multi_df, file = paste0("multi_table_by_site", Sys.Date(), ".csv"), row.names = FALSE)
+
+```
+
+
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+## NAC18b
+NAC18b<- original_data_with_new_race %>% select(patient_id,er_gene.factor,er_inheritance.factor,er_gene_sp) %>% na.omit() %>%  full_join(sample %>% select(patient_id), by = "patient_id" )
+
+ 
+er_gene<-NAC18b %>% 
+   filter(patient_id %in% sample$patient_id) %>% 
+ tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]" ),
+      patient_id ~ "{n_distinct}")
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of NAC18b Q4 to Q5 for All Patients **") %>%
+  bold_labels() 
+
+
+ 
+er_gene1<-NAC18b %>%  filter(patient_id %in% random_id$patient_id) %>% 
+ tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]" ),
+      patient_id ~ "{n_distinct}")
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of NAC18b Q4 to Q5 for Randomized Patients**") %>%
+  bold_labels() 
+
+
+```
+
+## oct_grading_visit(baseline)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# NAC33 Randomization(nac33_randomization)  eligible eye(s) (study eye) is:
+rd_eye<- original_data_with_new_race %>% 
+  filter(patient_id %in% e$patient_id) %>% 
+  select(patient_id,rd_eye.factor) %>% na.omit()
+
+ 
+
+oct_grading_visit <- original_data_with_new_race %>%
+  select(
+    patient_id,
+    rd_assignment.factor,
+    octv_eye,
+    octv_octqcp_od,
+    octv_octqi_od,
+    octv_octezq_od,
+    octv_bscanfov_od,
+    octv_art_od,
+    octv_ezwdth_od,
+    octv_octqcp_os,
+    octv_octqi_os,
+    octv_octezq_os,
+    octv_bscanfov_os,
+    octv_art_os,
+    octv_ezwdth_os
+  ) %>% 
+  right_join(rd_eye, by = "patient_id")%>%
+  filter(rd_assignment.factor != '' & !is.na(rd_assignment.factor))
+
+# %>% 
+# # each patient has one row; if variable indicate right eye only, then we shall set value for all left eye to be NA;
+#   mutate(across(ends_with("od"), ~if_else(ec_eye.factor == "OS only (left only)", NA_real_, as.numeric(.)))) %>% 
+#   mutate(across(ends_with("os"), ~if_else(ec_eye.factor == "OD only (right only)", NA_real_, as.numeric(.))))
+
+
+oct_grading_visit %>% 
+   tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]" ),
+      patient_id ~ "{n_distinct}"),
+    type = list(
+      c(octv_bscanfov_od,octv_art_od,octv_bscanfov_os,octv_art_os,  octv_octqcp_od,
+    octv_octqi_od,
+    octv_octezq_od,  octv_octqcp_os,
+    octv_octqi_os,
+    octv_octezq_os) ~ "categorical",
+      c(octv_ezwdth_od,octv_ezwdth_os) ~ "continuous"
+  )) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of oct_grading_visit for Randomized & Eligible Eyes**") %>%
+  bold_labels() 
+
+
+
+```
+
+
+## MP fixation screening
+
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# MP Fixation(mp_fixation) ,fxavgsensitivity is the Average sensitivity in the MP Fixation Form.  
+# NAC06 MAIA-MP Scrn(nac06_maiamp_scrn) Form : Mean Sensitivity OD and OS
+
+mp<- function(data){
+mp_fixation_var<- c("fxeye","fxavgsensitivity")
+mp_fixation<- data %>% 
+  dplyr::select(patient_id,redcap_repeat_instrument,all_of(mp_fixation_var)) %>% 
+  filter(redcap_repeat_instrument == "mp_fixation") %>% 
+  arrange(desc(patient_id)) %>% 
+  mutate(OD_OS = ifelse(fxeye == "R","OD","OS")) %>% 
+  dplyr::select(-redcap_repeat_instrument,-fxeye)  
+
+Mean_Sensitivity <- process_data(data, c("mps_sens_od", "mps_sens_os"),"Screening", "Mean_Sensitivity")
+
+Mean_Sensitivity <- Mean_Sensitivity %>%na.omit() %>% arrange(desc(patient_id)) 
+
+joined_mp <- Mean_Sensitivity %>%
+  left_join(mp_fixation, by = c("patient_id", "OD_OS")) %>% 
+  mutate(issue=ifelse(fxavgsensitivity!=Mean_Sensitivity | is.na(fxavgsensitivity)|is.na(Mean_Sensitivity),"error",NA))
+
+result_summary <- joined_mp %>%
+  group_by(OD_OS) %>%
+  summarise(
+    mean_fxavgsensitivity = mean(fxavgsensitivity, na.rm = TRUE),
+    mean_sensitivity = mean(Mean_Sensitivity, na.rm = TRUE)
+  ) 
+
+
+cat("--------------------------------------\n")
+
+for (i in 1:length(result_summary)) {
+  cat(names(result_summary)[i], ": ", result_summary[[i]], "\n")
+}
+cat("--------------------------------------\n")
+print("The mean difference is caused by below patiend_id(mp fixation Form and mean sensetivity data error" )
+print(kable(joined_mp%>% filter(issue=="error" & fxavgsensitivity !="NA"),row.names = FALSE))
+
+
+}
+mp(Screening) 
+
+
+```
+
+
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+## oct_grading_scrn (cross table). Note: Excluded patients who do not meet eligibility criteria(i.e. sample included Randomized, eligible, in pipeline)
+
+OCT<- eligible %>% dplyr::select(patient_id,redcap_repeat_instance,starts_with("octs")) %>% 
+  filter(!redcap_repeat_instance %in% c(1,2)) %>% dplyr::select(-redcap_repeat_instance)  
+
+exclude_empty_columns <- function(data) {
+  empty_columns <- colSums(is.na(data)) == nrow(data)
+  data[, !empty_columns, drop = FALSE]
+}
+
+exclude_var<- c("octs_site","octs_formname","octs_version" ,"octs_transform_dttm",
+ "octs_study" ,"octs_subjid" ,"octs_visname",  "octs_visdat" , "octs_gradedt","octs_reading_id")
+# Exclude empty columns
+OCT_filtered_data <- exclude_empty_columns(OCT)%>% dplyr::select(-exclude_var) 
+
+oct_table<- OCT_filtered_data %>% tbl_summary( statistic = list(all_continuous() ~ "{mean} ({sd}),{min}~{max}")) 
+gt_table <- as_gt(oct_table)
+
+# gt_table
+
+OCT_crosstable<- OCT_filtered_data %>% 
+  dplyr::select(patient_id,octs_eye,octs_eli_od,octs_eli_os)
+
+
+create_tbl_cross(OCT_crosstable, octs_eli_od, octs_eli_os, "OCT_G")
+
+
+# as_gt(OCT_G)
+
+ 
+ 
+# gt_table %>%
+#   gt::gtsave(paste0("table one ", Sys.Date(), ".pdf"))
+
+```
+
+## Summarize the number is among those whose baseline window has passed, how many successfully randomized, how many came but was not randomized, and how many missed the BS visit window.  The baseline window maximum value (+42 days) is based on the visit date [d_visitdt] in NAC01 Demographics. Note: withdraw patient included.
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+d_var<-c("d_visitdt","rd_date")
+
+window <- original_data_with_new_race%>% 
+  dplyr::select(all_of(demographic_variable), all_of(d_var), rd_assignment.factor) %>% 
+  filter(redcap_event_name.factor %in% c("Screening", "Baseline")) %>% 
+  filter(!redcap_repeat_instance %in% c(1, 2)) %>% 
+  dplyr::select(-redcap_var) %>%  
+  mutate(
+    d_visitdt = as.Date(as.character(d_visitdt), format = "%Y-%m-%d"),
+    rd_date = as.Date(as.character(rd_date), format = "%Y-%m-%d"),
+    d_visitdt = ave(d_visitdt, cumsum(!is.na(d_visitdt)), FUN = function(x) x[1])
+  )  %>% 
+  group_by(patient_id) %>%
+  fill(
+    everything(),
+    .direction = "updown"
+  ) %>%
+  ungroup()  %>% 
+  mutate(
+    baseline_window = ifelse((as.Date(d_visitdt) + 42 < Sys.Date()), "Passed BSL window", "Not Passed BSL window"),
+    randomized_window = case_when(
+      baseline_window == "Passed BSL window" & is.na(rd_assignment.factor) ~ "***Alert: Passed BSL window & NOT randomized",
+      baseline_window == "Passed BSL window" & !is.na(rd_assignment.factor) ~ "Passed BSL window & randomized",
+      baseline_window == "Not Passed BSL window" & !is.na(rd_assignment.factor) ~ "Not Passed BSL window & randomized",
+      baseline_window == "Not Passed BSL window" & is.na(rd_assignment.factor) ~ "Not Passed BSL window & Not randomized",
+      TRUE ~ NA_character_
+    ),
+    randomized_timeframe = 
+      case_when(randomized_window == "Passed BSL window & randomized"  & (as.Date(rd_date) <= (as.Date(d_visitdt) + 42)) ~ "Randomized before window passed" ,
+        randomized_window == "Passed BSL window & randomized"  & (as.Date(rd_date) > (as.Date(d_visitdt) + 42)) ~ "Randomized after window passed" ,       
+        TRUE ~ NA_character_
+                )
+  ) %>%
+  dplyr::select(-redcap_event_name.factor) %>%
+  unique() %>% 
+  # filter(patient_id %in% e$patient_id) %>% 
+  left_join(sample %>% select(patient_id,category),by="patient_id")  %>% 
+  mutate(randomized_window = ifelse(category =="withdrawal","withdrawal",randomized_window)) %>% 
+  filter(category != "ineligible")
+
+
+window  %>% dplyr::select(-d_var,-patient_id,-Age,-Sex,-Race) %>% tbl_summary( statistic = list(all_continuous() ~ "{mean} ({sd}),{min}~{max}")) 
+
+
+```
+
+## All follow-up visit windows are based on the date of randomization [rd_date]. Each follow-up visit has their own range, which is typically +/- 7 days for phone call visits, and +/- 28 days for the in-clinic visits. M45 has a window range of +/- 42 days.
+ 
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+ 
+# all visit should be empty, if any value, then need to discuss with team, i.e. missed visit issue happening
+mv_visit <- original_data_with_new_race %>% dplyr::select(patient_id,starts_with("mv_visit"))
+
+#visit schedule 
+visit_schedule <- tribble(
+  ~Visit, ~Visit_Name, ~Month, ~Days,
+  "PV1", "Phone call Visit 1", 2.25, 7,
+  "CV1", "In-clinic Follow-up Visit 1", 4.5, 28,
+  "PV2", "Phone call Visit 2", 6.75, 7,
+  "CV2", "In-clinic Follow-up Visit 2", 9, 28,
+  "PV3", "Phone call Visit 3", 11.25, 7,
+  "TV1", "Tele-visit 1", 13.5, 14,
+  "PV4", "Phone call Visit 4", 15.75, 7,
+  "CV3", "In-clinic Follow-up Visit 3", 18, 28,
+  "PV5", "Phone call Visit 5", 20.25, 7,
+  "TV2", "Tele-visit 2", 22.5, 14,
+  "PV6", "Phone call Visit 6", 24.75, 7,
+  "CV4", "In-clinic Follow-up Visit 4", 27, 28,
+  "PV7", "Phone call Visit 7", 29.25, 7,
+  "TV3", "Tele-visit 3", 31.5, 14,
+  "PV8", "Phone call Visit 8", 33.75, 7,
+  "CV5", "In-clinic Follow-up Visit 5", 36, 28,
+  "PV9", "Phone call Visit 9", 38.25, 7,
+  "CV6", "In-clinic Follow-up Visit 6", 40.5, 28,
+  "PV10", "Phone call Visit 10", 42.75, 7,
+  "CV7", "In-clinic Follow-up Visit 7", 45, 42
+)
+
+ 
+#function to calculate the visit schedule 
+ 
+calculate_dates <- function(window_data, visit_type) {
+  result <- window_data %>%
+    mutate(
+      rd_date = as.Date(rd_date),   # Ensure rd_date is a Date object
+      Visit = visit_type
+    ) %>%
+    left_join(visit_schedule, by = "Visit") %>%
+    mutate(
+      target_date = rd_date + floor(Month * 30),
+      earliest_date = target_date - Days,
+      latest_date = target_date + Days
+    )
+  return(result)
+}
+
+
+
+ 
+###################
+
+summary_of_followup_visit<- function(event_month,visit){
+  
+sdoct<-  original_data_with_new_race %>%  select(patient_id,redcap_event_name.factor,sdoct_visitdt) %>% 
+filter(sdoct_visitdt != "") %>% 
+  mutate(sdoct_visitdt = as.Date(sdoct_visitdt)) %>% 
+  filter(redcap_event_name.factor == "Baseline")
+  
+NAC35 <- original_data_with_new_race %>% dplyr::select(patient_id,ad_study_meds,ad_miss,redcap_event_name.factor)%>% 
+ filter(!is.na(ad_study_meds) | !is.na(ad_miss)) %>%
+  filter(redcap_event_name.factor=={{event_month}}) %>%
+  filter(patient_id %in% r$patient_id) %>% left_join(sdoct, by = "patient_id")
+  
+CV1<- original_data_with_new_race %>% dplyr::select(demographic_variable,starts_with("ad_visitdt"),redcap_event_name.factor) %>% 
+filter(redcap_event_name.factor=={{event_month}})  %>% 
+  dplyr::select(patient_id,ad_visitdt,redcap_event_name.factor) %>% left_join(NAC35, by = "patient_id") %>% unique() %>% 
+  filter(ad_visitdt !="") %>% 
+  full_join(rd %>% select(-rd_date),by=c("patient_id")) 
+
+
+
+CV1_result <- calculate_dates(window, {{visit}}) %>% 
+  left_join(CV1, by = "patient_id") %>% 
+  mutate(Category = case_when(
+    ex_reason =="4" ~ "Withdraw",
+    is.na(ad_visitdt) & is.na(target_date) ~ "Not scheduled",
+    !is.na(ad_visitdt) & ad_visitdt >= earliest_date & ad_visitdt <= latest_date ~ "Completed Within Visit Schedule Window",
+    is.na(ad_visitdt) & today() < earliest_date ~ "Scheduled but not completed, window not open",
+    is.na(ad_visitdt) & today() > latest_date ~ "Scheduled but not completed, outside window",
+    is.na(ad_visitdt) & today() <= latest_date & today() >= earliest_date ~ "Scheduled but not completed, in window",
+    TRUE ~ "Completed Outside Visit Schedule Window"))%>%
+  mutate(ad_visitdt = as.Date(ad_visitdt),
+         sdoct_visitdt = as.Date(sdoct_visitdt)) %>%
+   # mutate(drug_take_days = (as.numeric((ad_visitdt ) - (rd_date -1) )),
+    mutate(drug_take_days = (as.numeric((ad_visitdt ) - (sdoct_visitdt -1))),
+         drug_take_pieces = drug_take_days * 6)
+
+
+NAC47<-original_data_with_new_race %>% select(patient_id,redcap_event_name.factor,starts_with("psmd")) %>% 
+  filter(redcap_event_name.factor=={{event_month}},psmd_visitdt !="",psmd_return==1)
+ 
+#calculate total_unused,drug_used
+drug_taken_percent <- NAC47 %>%
+  group_by(patient_id) %>%
+  summarise(across(ends_with("unused"), sum, na.rm = TRUE)) %>%
+  rowwise() %>%
+  mutate(total_unused = sum(c_across(ends_with("unused")))) %>% 
+  dplyr::select(patient_id,total_unused) %>% 
+  left_join(NAC47 %>% dplyr::select(patient_id,psmd_in_number), by = "patient_id") %>% 
+  mutate(drug_used = psmd_in_number * 42 - total_unused) 
+
+# Remove the label from the drug_taken_percent column
+CV1_result <- CV1_result %>%
+  left_join(drug_taken_percent, by = "patient_id") %>%
+  mutate(drug_taken_percent = as.numeric(round(drug_used / drug_take_pieces * 100, 0)),
+         drug_taken_percent = remove_labels(drug_taken_percent)) %>% 
+  filter(rd_date !='' | !is.na(rd_date))
+
+return(CV1_result)
+ }
+ 
+
+#summary_tbl function to show the freq
+summary_of_followup_visit_plot<- function(data){
+  
+ data %>% 
+  dplyr::select(Visit_Name, Category, ad_study_meds, ad_miss,drug_taken_percent,days_from_randomized_to_withdraw) %>% 
+  tbl_summary(
+    digits = list(days_from_randomized_to_withdraw ~ 0) ,
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      )
+    ),
+    type = list(
+      c(ad_study_meds, ad_miss) ~ "categorical",
+      c(drug_taken_percent,days_from_randomized_to_withdraw) ~ "continuous"
+    )
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of follow-up visit windows among eligible including randomized**") %>%
+  bold_labels() 
+}
+
+
+#Note summary_of_followup_visit_plot1 function is used for phone call visit due to no medical taken; 
+summary_of_followup_visit_plot1<- function(data){
+ data %>% 
+  dplyr::select(Visit_Name, Category, ad_study_meds, ad_miss,days_from_randomized_to_withdraw) %>%
+  tbl_summary(
+    digits = list(days_from_randomized_to_withdraw ~ 0) ,
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      )
+    ),
+    type = list(
+      c(ad_study_meds, ad_miss) ~ "categorical" ,
+      c(days_from_randomized_to_withdraw) ~ "continuous"
+    )
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of follow-up visit windows among eligible including randomized**") %>%
+  bold_labels() 
+}
+#example of use the function to calculate PV1 and CV1
+
+
+#phone call visit
+PV1<-summary_of_followup_visit("M02.25","PV1")
+PV2<-summary_of_followup_visit("M06.75","PV2")
+PV3<-summary_of_followup_visit("M11.25","PV3")
+PV4<-summary_of_followup_visit("M15.75","PV4")
+PV5<-summary_of_followup_visit("M20.25","PV5")
+
+# summary_of_followup_visit_plot1(PV1)
+#in clinical visit,M04.5 will come back to return the unused drug and check the used drug number; 
+CV1<-summary_of_followup_visit("M04.5","CV1")
+# only below 4 follow up visits issue drug;
+CV2<-summary_of_followup_visit("M09","CV2")
+CV3<-summary_of_followup_visit("M18","CV3")
+CV4<-summary_of_followup_visit("M27","CV4")
+CV5<-summary_of_followup_visit("M36","CV5")
+
+# summary_of_followup_visit_plot(CV2)
+
+
+# ADD 4 follow up visits issue drug OF In-clinic Follow-up Visit into one table; most of the visit are not started yet; it is used for CV_earliest_date_index calculation; Note: only 4 follow up visit issue drugs; 
+
+CV<- rbind(CV2,CV3,CV4,CV5) %>% group_by(patient_id) %>% 
+  arrange(patient_id) %>% filter(is.na(ad_visitdt))
+
+
+CV_earliest_date_index <- CV %>%
+  group_by(patient_id) %>% 
+  summarise(earliest_date_take_drug = min(earliest_date)) %>% 
+  as.data.frame() %>% mutate(patient_id=as.character(patient_id))
+ 
+
+CV_followup_index <- CV %>%
+  filter(earliest_date<= "2025-07-01") %>% 
+  select(patient_id,rd_date,rd_assignment.factor,Visit_Name,Month,earliest_date) %>% 
+  as.data.frame() %>% mutate(patient_id=as.character(patient_id))
+
+# CV_earliest_date_index<- as.data.frame(CV_earliest_date_index) %>% mutate(patient_id=as.character(patient_id))
+
+
+```
+
+## M02.25 summary_of_followup_visit(Withdraw included)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+ 
+summary_of_followup_visit_plot1(PV1)
+
+```
+
+
+## M04.5 summary_of_followup_visit (Withdraw included)
+
+## Summary of Calculations
+- total_unused: The total number of unused drug pieces per patient.
+- drug_used: Calculated as the expected number of drug pieces (psmd_in_number * 42) minus the total_unused.
+
+- drug_take_days: The number of days between ad_visitdt (NAC35 visit date) and rd_date( aim to change to sdoct_visitdt ) - 1 (adjusted start date to include the start day).
+- drug_take_pieces: The total number of drug pieces taken, calculated by multiplying the number of days (drug_take_days) by 6 (assuming 6 pieces are taken per day).
+
+- drug_taken_percent: The percentage of drugs taken by the patient, calculated as (drug_used / drug_take_pieces) * 100.
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+print("Among M04.5 Completed Within Visit Schedule Window group, below patients did not have NAC47 psmd_visitdt filled to indicate the used or not used drug barcode")
+CV1 %>% filter(Category=="Completed Within Visit Schedule Window" & is.na(drug_used)) %>% pull(patient_id)
+
+summary_of_followup_visit_plot(CV1)
+
+
+#Note: sdoct_dt   we can not use this date to calculate the drug days take since 4.5 month do not have sdoct_dt filled
+
+
+
+```
+
+## Boxplot of Drug Taken Percent
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+# Create a custom function to add percent signs to y-axis labels
+percent_format <- function(x) {
+  paste0(x, "%")
+}
+
+ 
+# Create boxplot with enhanced aesthetics, narrower box width, and no x-axis
+ggplot(CV1 %>% filter(!ex_reason %in% '4'), aes(y = drug_taken_percent)) +
+  geom_boxplot(width = 0.1, fill = "skyblue", color = "darkblue", outlier.color = "red", outlier.shape = 16, outlier.size = 2) +
+  scale_y_continuous(
+    labels = percent_format,
+    limits = c(0, 100),
+    breaks = seq(0, 100, by = 10)
+  ) +
+  labs(
+    title = "Boxplot of Drug Taken Percent",
+    y = "Drug Taken Percent"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_text(size = 12),
+    axis.text.y = element_text(size = 10)
+  )
+
+# Calculate percentiles from 5% to 100% in increments of 5%, ignoring NA values
+percentiles <- quantile(CV1$drug_taken_percent, probs = seq(0.05, 1, by = 0.05), na.rm = TRUE)
+
+# Create a data frame from the percentiles
+percentile_df <- data.frame(
+  Percentile = names(percentiles),
+  Value = as.numeric(percentiles)
+)
+
+# Print the data frame
+percentile_df %>% kable()
+
+drug_taken_percent_discuss<- CV1 %>% filter(drug_taken_percent <= 85) %>% select(patient_id,drug_taken_percent) %>% 
+mutate(Notes = 
+case_when( patient_id %in% c('1203','1210','1211','1605') ~ "Discussed on July 11th",
+ patient_id %in% c('2908') ~ "Sent Email to Izzie on July 25th",
+ TRUE ~ "New Case") ) 
+
+drug_taken_percent_discuss %>% kable()
+# # Create boxplot with enhanced aesthetics, narrower box width, and no x-axis
+# ggplot(CV1, aes(y = drug_taken_percent)) +
+#   geom_boxplot(width = 0.1, fill = "skyblue", color = "darkblue", outlier.color = "red", outlier.shape = 16, outlier.size = 2) +
+#   scale_y_continuous(labels = percent_format, limits = c(0, 100)) +
+#   labs(title = "Boxplot of Drug Taken Percent",
+#        y = "Drug Taken Percent") +
+#   theme_minimal() +
+#   theme(
+#     plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+#     axis.title.x = element_blank(),
+#     axis.text.x = element_blank(),
+#     axis.ticks.x = element_blank(),
+#     axis.title.y = element_text(size = 12),
+#     axis.text.y = element_text(size = 10)
+#   )
+
+# 
+# # Create boxplot with enhanced aesthetics, narrower box width, and no x-axis
+# ggplot(CV1, aes(y = drug_taken_percent)) +
+#   geom_boxplot(width = 0.1, fill = "skyblue", color = "darkblue", outlier.color = "red", outlier.shape = 16, outlier.size = 2) +
+#   scale_y_continuous(labels = percent_format, limits = c(0, 100)) +
+#   labs(title = "Boxplot of Drug Taken Percent",
+#        y = "Drug Taken Percent") +
+#   theme_minimal() +
+#   theme(
+#     plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+#     axis.title.x = element_blank(),
+#     axis.text.x = element_blank(),
+#     axis.ticks.x = element_blank(),
+#     axis.title.y = element_text(size = 12),
+#     axis.text.y = element_text(size = 10)
+#   )
+# 
+# 
+# # Create boxplot with enhanced aesthetics, narrower box width, and large x scale
+# ggplot(CV1, aes(x = factor(1), y = drug_taken_percent)) +
+#   geom_boxplot(width = 0.1, fill = "skyblue", color = "darkblue", outlier.color = "red", outlier.shape = 16, outlier.size = 2) +
+#   scale_y_continuous(labels = percent_format, limits = c(0, 100)) +
+#   scale_x_discrete(expand = expansion(mult = c(0.1, 0.1))) +  # Add more space around the boxplot
+#   labs(title = "Boxplot of Drug Taken Percent",
+#        y = "Drug Taken Percent",
+#        x = "") +
+#   theme_minimal() +
+#   theme(
+#     plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+#     axis.title.x = element_blank(),
+#     axis.text.x = element_blank(),
+#     axis.ticks.x = element_blank(),
+#     axis.title.y = element_text(size = 12),
+#     axis.text.y = element_text(size = 10)
+#   )
+
+```
+
+## Summary of Unused Tablets
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+CV1 %>% filter(!ex_reason %in% '4') %>% 
+  dplyr::select(patient_id,total_tablets_unused = total_unused) %>% 
+  filter(!is.na(total_tablets_unused) & total_tablets_unused!=0 )%>% 
+  summarise(total_tablets_unused=sum(total_tablets_unused),
+            number_of_unused_event = n(),
+            unique_patient = n_distinct(patient_id)) %>% 
+  full_join(
+CV1 %>% filter(!ex_reason %in% '4') %>% 
+  dplyr::select(total_tablets_unused = total_unused) %>% 
+  filter(!is.na(total_tablets_unused) & total_tablets_unused!=0 )%>% 
+  summarise(
+    min_event = min(total_tablets_unused),
+    max_event = max(total_tablets_unused),
+    median = median(total_tablets_unused),
+    Q1 = quantile(total_tablets_unused, 0.25),
+    Q3 = quantile(total_tablets_unused, 0.75)
+  ) ,by= character()
+  ) %>% kable()
+
+  
+```
+
+## NAC47 Inventory Dispense_status : Check Alignment with Outgoing Barcodes
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+#https://www.danieldsjoberg.com/gtsummary/articles/tbl_summary.html#:~:text=There%20is%20flexibility%20in%20how%20you%20select%20variables,pass%20digits%20%3D%20c%20%28age%2C%20marker%29%20~%201.
+
+# Create a mapping dictionary to align site from inventory and redcap are the same content 
+site_mapping <- c(
+  "11 Emory" = "11_emory",
+  "12 Hopkins" = "12_hopkins",
+  "13 Harvard" = "13_harvard",
+  "14 Mayo Clinic" = "14_mayo_clinic",
+  "15 MCW Eye Institute" = "15_mcw_eye_institu",
+  "16 Retina SW" = "16_retina_sw",
+  "17 Stanford" = "17_stanford",
+  "18 UC Davis" = "18_uc_davis",
+  "19 UCSF" = "19_ucsf",
+  "20 Univ Florida" = "20_univ_florida",
+  "21 Univ Illinois Chicago" = "21_univ_illinois_c",
+  "22 Univ Iowa" = "22_univ_iowa",
+  "23 Univ Miami" ="23_univ_miami" ,
+  "24 Univ Michigan" = "24_univ_michigan",
+  "25 Univ Minnesota" = "25_univ_minnesota",
+  "26 Univ Oklahoma" = "26_univ_oklahoma",
+  "27 USC" = "27_usc",
+  "28 Univ Utah" = "28_univ_utah",
+  "29 Univ Washington" = "29_univ_washington",
+  "30 Univ Wisconsin Madison" = "30_univ_wisconsin",
+  "31 Vanderbilt" = "31_vanderbilt",
+  "32 Vitreo Retinal Assoc" = "32_vitreo_retinal",
+  "33 Univ Graz"="33_univ_graz",
+  "34 Mcgill" = "34_mcgill",
+  "35 Univ Tubingden" = "35_univ_tubingden",
+  "37 Radboud" = "37_radboud",
+  "38 Univ Amsterdam"="38_univ_amsterdam",
+  "39 Basel Eye Clinic" = "39_basel_eye_clini",
+  "45 Univ Penn" = "45_univ_penn"
+)
+ 
+
+#read inventory data from Dr.kong
+C1A_US<- read.csv("C:\\Users\\mshi27\\Downloads\\C1A US dist to sites and receipt_XK2024-01-15.csv")
+C1A_US <- C1A_US %>%  setNames(tolower(names(.))) %>% mutate(series ="C1A",exp.date = format(anytime(exp.date), "%Y-%m-%d")) 
+#C1A_EU<- read.csv("C:\\Users\\mshi27\\Downloads\\C1A EU dist to sites and receipt_XK2024-01-15.csv") 
+#C1A_EU<- read.csv("C:\\Users\\mshi27\\Downloads\\C1A EU dist to sites and receipt_XK2024-05-14.csv")
+C1A_EU<- read.csv("C:\\Users\\mshi27\\Downloads\\C1A EU dist to sites and receipt_XK2024-06-02.csv")
+C1A_EU<- C1A_EU %>% setNames(tolower(names(.))) %>% mutate(series ="C1A",exp.date = format(anytime(exp.date), "%Y-%m-%d"))
+# C1A_UK <-  read.csv("C:\\Users\\mshi27\\Downloads\\C1A UK dist to sites and receipt_XK2024-03-19.csv")
+C1A_UK <-  read.csv("C:\\Users\\mshi27\\Downloads\\C1A UK dist to sites and receipt_XK2024-06-26.csv")
+C1A_UK<- C1A_UK %>%  setNames(tolower(names(.))) %>% mutate(series ="C1A") 
+
+# C1B_US<- read.csv("C:\\Users\\mshi27\\Downloads\\C1B US dist to sites and receipt_XK2024-05-30.csv")
+# C1B_US<- read.csv("C:\\Users\\mshi27\\Downloads\\C1B US dist to sites and receipt_XK2024-06-25.csv")
+C1B_US <- read.csv("C:\\Users\\mshi27\\Downloads\\C1B US dist to sites and receipt_XK2024-08-09.csv")
+C1B_US<-C1B_US %>% mutate(test = ifelse(site==actual.site,"same","no")) %>% 
+  mutate(site =  ifelse(test == "no", actual.site, site)) %>% 
+  select(-actual.site,-test)
+
+ 
+
+C1B_US <- C1B_US %>% setNames(tolower(names(.))) %>% mutate(series = "C1B")  
+
+C1C_NL<- read.csv("C:\\Users\\mshi27\\Downloads\\C1C NL dist to sites and receipt_XK2024-06-26.csv") 
+C1C_NL<- C1C_NL %>% setNames(tolower(names(.))) %>% mutate(series = "C1C") 
+ 
+ 
+
+ALL<- rbind(C1A_US,C1A_EU,C1A_UK,C1B_US,C1C_NL) %>% 
+  setNames(tolower(names(.))) %>%
+  filter(!usable %in% c("No","no","NO")) %>% 
+  mutate(
+    site = case_when(
+      site %in% names(site_mapping) ~ site_mapping[site],
+      TRUE ~ site
+    ),
+    # Remove leading spaces from the 'ID.Number' column
+    id.number = trimws(id.number),
+    exp.date = format(anytime(exp.date), "%Y-%m-%d"),
+    arrive.date = format(anytime(arrive.date), "%Y-%m-%d")
+  )
+
+
+# unique(ALL$site)  
+# unique(ALL$arrive.date) 
+
+
+# Remove labels from the selected columns from clinical level data
+nac67_drug_destruction <- clinical_level %>%dplyr::select(starts_with("dd_id")) %>% 
+  mutate(across(starts_with("dd_id"), unclass))
+
+# Pivot the data
+clinical <- nac67_drug_destruction %>%
+  pivot_longer(
+    cols = starts_with("dd_id"),
+    names_to = "barcode_id",
+    values_to = "barcode"
+  )
+
+
+#clinical_level DATA
+
+nac66_plasma_shipment <- clinical_level %>%dplyr::select(starts_with("ps_id")) %>% 
+  mutate(across(starts_with("ps_id"), unclass))
+
+clinical_nac66_plasma_shipment <- nac66_plasma_shipment %>%
+  pivot_longer(
+    cols = starts_with("ps_id"),
+    names_to = "ps_barcode_id",
+    values_to = "ps_barcode"
+  )
+
+# NAC47_barcode_baseline<- Baseline %>% 
+#   dplyr::select(
+#     redcap_data_access_group,rd_assignment.factor,all_of(demographic_variable),
+#     outgoing_date=psmd_outgoing_dt1,starts_with(c("psmd_out","psmd_in"))& ends_with("_id")) %>% 
+#   filter(!redcap_repeat_instance %in% c(1,2))%>%
+#   dplyr::select(-redcap_var) %>% 
+#   mutate(across(everything(), as.character))
+
+#process barcode to longformat from Redcapdata
+NAC47_barcode<- original_data_with_new_race %>% 
+  dplyr::select(
+    redcap_data_access_group,rd_assignment.factor,all_of(demographic_variable),
+    outgoing_date=psmd_outgoing_dt1,starts_with(c("psmd_out","psmd_in"))& ends_with("_id")) %>% 
+  filter(!redcap_repeat_instance %in% c(1,2))%>%
+  dplyr::select(-redcap_var) %>% 
+  mutate(across(everything(), as.character))  %>% 
+  filter(rd_assignment.factor != "" |!is.na(rd_assignment.factor))
+
+
+ 
+# Pivot the long format of the outgoing barcode data
+outgoing_barcode <- pivot_longer(
+  # Selecting columns except those starting with "psmd_in"
+  NAC47_barcode %>% dplyr::select(-starts_with("psmd_in")),
+  cols = starts_with("psmd_out"),  # Selecting columns starting with "psmd_out"
+  names_to = "barcode_id",  # Name of the new column for barcode IDs
+  values_to = "barcode"  # Name of the new column for barcode values
+) %>%
+# Mutate to process the data further
+mutate(
+  barcode = trimws(barcode), 
+  assign_barcode = substr(barcode,1,1),
+  # Remove leading/trailing whitespaces from barcode values
+  # Check if barcode is in the inventory and if the redcap_data_access_group is in the site
+  drug_inventory = (barcode %in% ALL$id.number) & (redcap_data_access_group %in% ALL$site) & 
+    rd_assignment.factor == assign_barcode
+) %>%
+  select(-barcode_id) %>%
+  unique()
+ 
+
+patient_id_discussed_for_outgoing_barcode <- c("1201","3404")
+
+outgoing_barcode_issue<- outgoing_barcode  %>% 
+  dplyr::filter(drug_inventory==FALSE & !is.na(barcode)&barcode!="" ) %>% 
+  mutate(Notes = ifelse(patient_id %in% patient_id_discussed_for_outgoing_barcode , 'Discussed', NA))
+
+view(outgoing_barcode_issue)
+
+
+# write.csv(outgoing_barcode_issue,"outgoing_barcode_issue.csv")
+
+
+# https://livejohnshopkins-my.sharepoint.com/:f:/r/personal/xkong4_jh_edu/Documents/RP%20NAC%20Trial%20Planning/RP%20NAC%20Trial%20(Group)/Drug%20distribution%20related/Distribution%20to%20sites?csf=1&web=1&e=NI4bgt
+
+
+# table(Distribution$letter)
+
+# I've augmented the dataset with a new column named 'series' to differentiate between "C1A" and "C1B". This additional column can be employed for filtering based on specific requirements. The 'Dispense status' column encompasses four distinct levels: "Dispensed", "Destructed", "To be used", and "Planned but not received yet".
+
+
+# "Dispensed": Items are categorized as "Dispensed" if their id.number is found in the barcode column of the outgoing_barcode from Redcap data frame.If dispensed, then study_ID and dispensing date should be available. 
+# 
+# "Planned but not received yet": Items are categorized as "Planned but not received yet" if their arrive.date is missing (NA), indicating that they have been planned for delivery but not yet received.
+# 
+# "Destructed": Items are categorized as "Destructed" if their id.number is found in the barcode column of the clinical data frame, suggesting that they have been marked for destruction. 'Destructed' is based on clinical data, from NAC67 Form, if 'dd_id' contains any barcode, it means destructed. (i.e. exposures in the sun; )
+# 
+# "To be used": This is the default category assigned to items that do not meet any of the above conditions. It includes items that are not dispensed, not planned for delivery, and not marked for destruction. 
+
+
+
+#out data is outgoing barcode and the event name
+out<- outgoing_barcode %>% dplyr::select(site=redcap_data_access_group,id.number=barcode,patient_id,outgoing_date,event_name=redcap_event_name.factor)
+
+# except those randomized, the rest of the eligible patients they all have a screen date. we need to add these date into inventory summary;
+site<- sample%>%filter(category %in% c("in pipeline","eligible")) %>% dplyr::select(redcap_data_access_group,patient_id) %>% 
+  mutate(patient_id=as.character(patient_id))
+  
+
+# screen_date<- original_data_with_new_race %>% 
+#   mutate(patient_id=as.character(patient_id), screen_date = as.Date(d_visitdt)) %>% 
+#   select(patient_id,screen_date) %>% 
+#   right_join(site,by="patient_id") %>%
+#   filter(!is.na(screen_date)) %>% 
+#   group_by(redcap_data_access_group) %>%
+#   mutate(screen_date_each_site = paste0(" patient_id :",patient_id," [", screen_date, " ]") %>% toString(),
+#         screen_date_add_42days = paste0(" patient_id :",patient_id," [", screen_date +42, " ]") %>% toString()) %>% 
+#   dplyr::select(redcap_data_access_group, screen_date_each_site,screen_date_add_42days) %>% 
+#   # Ensure unique rows in the result
+#   unique() %>% 
+#   mutate(redcap_data_access_group=as.character(redcap_data_access_group))
+
+
+ 
+Distribution <- ALL %>%
+  mutate(
+    Dispense_status = case_when(
+      id.number %in% outgoing_barcode$barcode ~ "Dispensed",
+      is.na(arrive.date) ~ "Planned but not received yet",
+      id.number %in% clinical$barcode ~ "Destructed",
+      TRUE ~ "To be used"
+    ),
+    today = today(),
+    month_to_expire = round(as.numeric(interval(today(), exp.date) / months(1)),0)
+    ) %>% left_join(out, by=c("site","id.number"))  %>%   # outgoing event name , barcode...
+          left_join(CV_earliest_date_index ,by ="patient_id")  # among month 9, the smallest date 
+  
+
+### this file contains site and earliest_date_take_drug with corresponding letter and patient id
+#with_ties = TRUE (default): If there are multiple rows with the same minimum value for the specified column, all those rows will be included in the result.
+# with_ties = FALSE: If there are multiple rows with the same minimum value, only one of those rows will be included in the result. Essentially, it ensures that you only get a single row per group, even if there are ties.
+
+Distribution_summ<-Distribution %>%
+   filter(Dispense_status == "To be used") %>% 
+  group_by(site, Dispense_status, letter) %>%
+  summarise(count_dispensed = n(),
+            kit =  paste0(round(count_dispensed /48,1), " kit to be used ") ) %>% 
+  ungroup() %>% 
+  select(site,letter,kit) %>% unique() 
+  
+  
+
+
+earliest_date_take_drug <- Distribution %>%
+  dplyr::select(site, letter, earliest_date_take_drug, patient_id_earliest_take_drug=patient_id) %>%
+  filter(!is.na(earliest_date_take_drug)) %>%
+  distinct() %>%
+  group_by(site, letter) %>%
+  slice_min(earliest_date_take_drug, with_ties = TRUE) %>% 
+  mutate(earliest_date_within_one_month = ifelse(earliest_date_take_drug - today() <= days(60), "Yes", "No")) %>% 
+  left_join(Distribution_summ, by = c("site","letter"))%>%
+  mutate(earliest_date_by_letter = paste0(letter, " [ID: ", patient_id_earliest_take_drug, ", ",   earliest_date_take_drug," take_drug_soon : ", earliest_date_within_one_month," ; ", kit," ]"))%>%
+dplyr::select(site, earliest_date_within_one_month,earliest_date_by_letter) %>%
+  group_by(site,earliest_date_within_one_month) %>%
+  mutate(earliest_date_by_letter = earliest_date_by_letter %>% toString()) %>% unique() %>%
+  ungroup()%>%
+  select(site, earliest_date_by_letter,earliest_date_within_one_month) %>%
+  unique()
+
+#### add one column to indicate the total number of Randomized 
+
+rand <- sample %>%
+  dplyr::select(site = redcap_data_access_group, category) %>%
+  filter(category == "Randomized") %>%
+  group_by(site) %>%
+  summarise(number_of_randomized_by_site = n()) %>%
+  ungroup() %>% 
+  mutate(site = as.character(site))
+
+
+withdraw_date <- sample %>% 
+  dplyr::select(site = redcap_data_access_group, patient_id, ex_withdrawdt) %>% 
+  filter(ex_withdrawdt != "" | !is.na(ex_withdrawdt)) %>% 
+  mutate(withdraw  = paste0("Patient ID : ",patient_id, " Date of withdraw :", ex_withdrawdt)%>% toString()) %>% 
+   mutate(site = as.character(site)) %>% 
+  select(site, withdraw)
+  #make prediction of next rd assignment; 
+
+redcap_rand_list<- read.csv( "C:\\Users\\mshi27\\Desktop\\NAC Attack\\redcap_rand_list_XK Sep_27_2023.csv")
+DAGs<- read.csv( "C:\\Users\\mshi27\\Desktop\\NAC Attack\\NACAttackPrime_DAGs_2023-08-24.csv")
+ 
+
+# redcap_rand_list1 <- redcap_rand_list %>% 
+#   full_join(DAGs, by = c("redcap_data_access_group" = "data_access_group_id" )) %>% 
+#   select(-data_access_group_name) %>% 
+#   group_by(redcap_data_access_group) %>% 
+#   mutate(index = row_number()) %>% 
+#   left_join(rand, by = c("unique_group_name" = "site"))%>% 
+#   group_by(redcap_data_access_group) %>% 
+#   filter(index > number_of_randomized_by_site )%>% 
+#   group_by(redcap_data_access_group) %>% 
+#   filter(index == min(index)) %>% 
+#   ungroup() %>% 
+#   select(site = unique_group_name,next_rd_assignment = rd_assignment) %>% 
+#   mutate(site = as.character(site))
+
+
+redcap_rand_list1 <- redcap_rand_list %>%
+  full_join(DAGs, by = c("redcap_data_access_group" = "data_access_group_id")) %>%
+  select(-data_access_group_name) %>%
+  group_by(redcap_data_access_group) %>%
+  mutate(index = row_number()) %>%
+  left_join(rand, by = c("unique_group_name" = "site")) %>%
+  group_by(redcap_data_access_group) %>%
+  filter(index > number_of_randomized_by_site) %>%
+  slice_head(n = 6) %>% 
+  ungroup() %>%
+  select(site = unique_group_name, next_rd_assignment = rd_assignment) %>%
+  mutate(site = as.character(site)) %>% 
+  group_by(site) %>% 
+  mutate(next_rd_assignment = next_rd_assignment %>% toString()) %>% 
+  unique()
+
+# screen_n<- original_data_with_new_race %>% 
+#   mutate(patient_id=as.character(patient_id), screen_date = as.Date(d_visitdt)) %>% 
+#   select(patient_id,screen_date) %>% 
+#   right_join(site,by="patient_id") %>%
+#   filter(!is.na(screen_date))%>% 
+#   mutate(redcap_data_access_group = as.character(redcap_data_access_group)) %>% 
+#   group_by(redcap_data_access_group) %>% 
+#   summarise(N = n())
+
+
+
+screen_date <- original_data_with_new_race %>% 
+  mutate(patient_id = as.character(patient_id), 
+         screen_date = as.Date(d_visitdt)) %>% 
+  select(patient_id, screen_date) %>% 
+  right_join(site, by = "patient_id") %>%
+  filter(!is.na(screen_date)) %>% 
+  mutate(redcap_data_access_group = as.character(redcap_data_access_group))%>% 
+  group_by(redcap_data_access_group) %>%
+  mutate(screen_date_each_site = paste0(" patient_id :", patient_id, " [", screen_date, " ]"),
+         screen_date_add_42days = paste0(" patient_id :", patient_id, " [", screen_date + 42, " ]")) %>% 
+  dplyr::select(redcap_data_access_group, screen_date_each_site, screen_date_add_42days) %>% 
+  unique() %>% 
+  mutate(redcap_data_access_group = as.character(redcap_data_access_group)) %>% 
+  full_join(redcap_rand_list1, by = c("redcap_data_access_group" = "site")) 
+
+
+# write_xlsx(Distribution, path = paste0("Inventory_Report(C1A & C1B)", format(Sys.Date(), "%Y-%m-%d"), ".xlsx"))
+ 
+# by letter to get Distribution # and how many month left ; (exp.date - today )by new column name Month_to_expire; US+NL; add cata: "Planed not received yet" 
+
+Distribution_summary <- Distribution %>%
+  group_by(site, Dispense_status, letter, month_to_expire) %>%
+  summarise(count_dispensed = n()) %>%
+  ungroup()%>%
+  group_by(site,Dispense_status) %>%
+  summarise(
+    wallets = sum(count_dispensed),
+    num_of_walltets_by_letter = paste0(letter, ": ", count_dispensed, " wallets") %>% toString(),
+    kit_corr_column_D = paste0(round(count_dispensed/48, 1), " kit") %>% toString(),
+    months_to_expire_for_each_letter = paste(month_to_expire, collapse = ", ")
+  ) %>%
+  mutate(
+    Dispense_status = Dispense_status,
+    Total_wallets = wallets
+  )%>% 
+  dplyr::select(site, Dispense_status,Total_wallets, num_of_walltets_by_letter , months_to_expire_for_each_letter,kit_corr_column_D) %>% 
+  arrange(site) %>%
+  left_join(screen_date, by = c( "site" = "redcap_data_access_group" ))  %>% 
+  left_join(rand,by = c( "site" )) %>% 
+  left_join(earliest_date_take_drug, by = c( "site" ))%>%
+  dplyr::select(
+    site,
+    Dispense_status,
+    Total_wallets,
+    num_of_walltets_by_letter,
+    months_to_expire_for_each_letter,
+    # kit_corr_column_D,
+    earliest_date_by_letter,
+    earliest_date_within_two_month=earliest_date_within_one_month,
+    number_of_randomized_by_site,
+    screen_date_each_site,
+    screen_date_add_42days,
+    next_rd_assignment
+  ) %>% unique() %>% 
+  left_join(withdraw_date, by = "site")
+
+ 
+
+ 
+# library(r2rtf)
+# Write Distribution_summary 
+# write_xlsx(Distribution_summary, paste0("Dispense_Summary_",today(),".xlsx"))
+# write_xlsx(Distribution, path = paste0("Inventory_Report(C1A & C1B)", format(Sys.Date(), "%Y-%m-%d"), ".xlsx"))
+
+# 
+#  
+# # Define the filename for the HTML file
+# html_file <- "Distribution_Summary.html"
+# 
+# # Save the styled HTML table
+# Distribution_summary %>%
+#   kable("html", escape = FALSE) %>%
+#   kable_styling() %>%
+#   column_spec(1, bold = TRUE) %>%
+#   save_kable(file = html_file)
+ 
+# # Convert the HTML file to PDF
+# webshot2::webshot(html_file, file = "Distribution_Summary.pdf")
+
+# no need to write out weekly but when we see new issues, will discuss and share with teams for those issue barcode.
+# write_xlsx(outgoing_barcode_issue,path = paste0("outgoing_barcode_issue", format(Sys.Date(), "%Y-%m-%d"), ".xlsx"))
+```
+
+## sms_adherence 
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+var<- c("redcap_event_name.factor","redcap_repeat_instrument","redcap_data_access_group","patient_id")
+
+sms_adherence<- original_data_with_new_race %>%  filter(patient_id %in% eligible$patient_id)%>%  
+  dplyr::select(all_of(var),starts_with("sms_adherence"))%>%
+  filter(redcap_event_name.factor %in% paste0("Week ", 0:51))
+ 
+recode_values <- function(variable) {
+  recode(as.character(variable),
+         `1` = "I took all doses required",
+         `2` = "I missed once or twice",
+         `3` = "I missed several times (3 or more times)")}
+# List of language variables
+language_vars <- c("en", "fr","de","nl","es")
+# Loop through language variables and apply recoding
+for (lang in language_vars) {
+  sms_adherence[[paste0("sms_adherence_", lang)]] <- recode_values(sms_adherence[[paste0("sms_adherence_", lang)]])
+}
+# view(sms_adherence)
+
+# sms_adherence %>% dplyr::select(-redcap_event_name.factor,-patient_id,-redcap_repeat_instrument) %>% 
+#   tbl_summary(by="redcap_data_access_group", statistic = list(all_continuous() ~ "{mean} ({sd}),{min}~{max}")) 
+
+# write.csv(sms_adherence,paste0("sms_adherence_",today(),".csv"))
+
+```
+
+## NAC32  Summary of text message among eligible including randomized
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# nac32_text_message_config incluted all of the NAC32 taxt message form information; 
+
+nac32_text_message_config<- original_data_with_new_race %>%  filter(patient_id %in% eligible$patient_id & redcap_event_name.factor %in% c("Continuous Data") & redcap_repeat_instrument == "")%>% 
+  dplyr::select(redcap_data_access_group,all_of(demographic_variable), starts_with("sms_")&!ends_with(".factor")&!starts_with("sms_adherence_"))  
+
+ 
+# nac32_text_message_config<- original_data_with_new_race %>%  filter(patient_id %in% eligible$patient_id )%>%  dplyr::select(all_of(site),all_of(demographic_variable), starts_with("sms_")&!ends_with(".factor")&!starts_with("sms_adherence_"))  %>% 
+#   filter(redcap_event_name.factor =="Continuous Data")
+
+
+#Patients has completed their randomization and has consented to take the weekly survey. Open form NAC32 and set the date for the next Monday. review Daisy to see if Daisy is missing filling the NAC32 fset the date for the next Monday.  
+Daisy<- nac32_text_message_config %>% dplyr::select(patient_id,sms_survey,sms_rand,sms_surveystart_dt) %>% 
+  filter(sms_survey== 1 & !is.na(sms_rand) & sms_surveystart_dt== "")
+
+view(Daisy)
+
+ 
+
+original_data_with_new_race %>% dplyr::select(patient_id,sms_reminder,sms_survey) %>%  na.omit() %>%
+  filter(patient_id %in% e$patient_id)%>% 
+  dplyr::select(patient_id,sms_reminder,sms_survey) %>% right_join(e, by = "patient_id")  %>% 
+  tbl_summary( 
+  statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      ),
+        patient_id ~ "{n_distinct}"
+      ),
+    type = list(starts_with("sms_") ~ "categorical") ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    all_stat_cols() ~ " "
+  ) %>%
+  modify_caption("**Summary of text message among eligible including randomized**") %>%
+  bold_labels()
+
+ 
+```
+
+## NAC72 Summary of ACMG secondary findings from genome sequencing among eligible including randomized
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+nac72_consent_options<- original_data_with_new_race %>%  filter(patient_id %in% eligible$patient_id & redcap_event_name.factor %in% c("Continuous Data") & redcap_repeat_instrument == "")%>%  dplyr::select(redcap_data_access_group,all_of(demographic_variable), starts_with("pcot_")&!ends_with(".factor"))
+
+# view(nac72_consent_options)
+ACMG<-original_data_with_new_race %>% dplyr::select(patient_id,pcot_recv_acmg) %>% na.omit() %>% right_join(a, by = "patient_id")
+
+
+pcot_recv_acmg<- original_data_with_new_race %>% dplyr::select(patient_id,pcot_recv_acmg) %>% na.omit() %>% right_join(a, by = "patient_id")%>% 
+tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      ),
+      patient_id ~ "{n_distinct}"
+    ),
+      type = list(starts_with("pcot_recv_acmg") ~ "categorical") ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    all_stat_cols() ~ ""
+  ) %>%
+  modify_caption("**Summary of ACMG secondary findings from genome sequencing among all screened**") %>%
+  bold_labels()
+# 
+# as_gt(pcot_recv_acmg)
+pcot_recv_acmg
+
+
+pcot_recv_acmg_randomized<- original_data_with_new_race %>% dplyr::select(patient_id,pcot_recv_acmg)  %>% na.omit() %>% 
+  filter(patient_id %in% e$patient_id)%>% 
+  dplyr::select(patient_id,pcot_recv_acmg)%>% right_join(e,by="patient_id") %>% 
+tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]" ),
+      patient_id ~ "{n_distinct}"),
+type = list(pcot_recv_acmg ~ "categorical"),
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    all_stat_cols() ~ ""
+  ) %>%
+  modify_caption("**Summary of ACMG secondary findings from genome sequencing among eligible including randomized**") %>%
+  bold_labels()
+
+# as_gt(pcot_recv_acmg_randomized)
+pcot_recv_acmg_randomized
+
+```
+
+
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+
+## aoslos_eligible and randomization status for eligible patients; (Not showing)
+
+
+#`aoslov_censor` doesn't exist in Redcap. data %>%dplyr::select(aoslov_censor) 
+var<- c("rd_eye.factor","rd_assignment.factor","rd_date","aoslos_eligible.factor","aoslos_studyeye.factor",
+"aoslov_visitdt","aoslov_eye","aoslov_location","aoslov_remote_sitenum")
+  
+aoslos_eligible<- original_data_with_new_race %>% dplyr::select(redcap_data_access_group,all_of(demographic_variable),all_of(var))%>%  
+  mutate(
+    aoslov_visitdt = as.Date(as.character(aoslov_visitdt), format = "%Y-%m-%d"),
+    rd_date = as.Date(as.character(rd_date), format = "%Y-%m-%d"),
+    aoslov_visitdt = ave(aoslov_visitdt, cumsum(!is.na(aoslov_visitdt)), FUN = function(x) x[1])
+  )  %>% 
+  group_by(patient_id) %>%
+  fill(
+    everything(),
+    .direction = "updown"
+  ) %>%
+  ungroup() %>% dplyr::select(-redcap_event_name.factor,-redcap_repeat_instrument,-redcap_repeat_instance) %>% 
+  unique()%>% filter(patient_id %in% eligible$patient_id) %>% 
+  mutate(flag = ifelse(aoslov_visitdt <= rd_date, "ok", "issue")) #aoslove date can not later than randomized date;
+  
+
+# view(aoslos_eligible)
+```
+
+## Summary of hgi_pedigree and hgi_genetic_test among eligible including randomized
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+NAC17 <- original_data_with_new_race %>% 
+  dplyr::select(patient_id, starts_with(c("hgi_pedigree", "hgi_inherit_mode", "hgi_pedigree", "hgi_pseen_before", "hgi_genetic_test","er_gene")) & ends_with("factor")) %>% 
+  distinct() %>% 
+  pivot_longer(
+    cols = starts_with("hgi_pedigree"),
+    names_to = "hgi_pedigree",
+    values_to = "value"
+  )%>% 
+  filter(value == "Checked") %>% 
+  mutate(
+    hgi_pedigree = recode(as.character(hgi_pedigree),
+                           "hgi_pedigree___0.factor" = "NO",
+                           "hgi_pedigree___1.factor" = "Yes, from patient chart in the clinic",
+                           "hgi_pedigree___2.factor" = "Yes, the patient brought it in ")) %>%
+  pivot_longer(
+    cols = starts_with("hgi_genetic_test"),
+    names_to = "hgi_genetic_test",
+    values_to = "genetic_test_value"
+  ) %>%
+   filter(genetic_test_value == "Checked") %>%
+  mutate(
+    hgi_genetic_test = recode(as.character(hgi_genetic_test),
+                              "hgi_genetic_test___0.factor" = "No",
+                              "hgi_genetic_test___1.factor" = "Yes, from patient chart in the clinic",
+                              "hgi_genetic_test___2.factor" = "Yes, the patient brought it in ")) %>% 
+   select(-genetic_test_value,-value)
+
+# genetic %>% group_by(patient_id) %>% count() %>% filter(n>=2)
+#2201,3101 multiple selection 
+
+genetic<- NAC17 %>% 
+  filter(patient_id %in% e$patient_id ) %>% 
+  dplyr::select(patient_id, starts_with(c("hgi_pedigree", "hgi_genetic_test")) & !ends_with(".factor")) %>%
+  right_join(e,by ="patient_id")%>% 
+  tbl_summary(
+      statistic = list(patient_id ~ "{n_distinct}" ),
+      type = list(starts_with("hgi") ~ "categorical") ) %>% 
+      modify_header(label ~ "**Variable**") %>%
+      modify_footnote(
+      all_stat_cols() ~ "N is greater than Patient ID is due to multiple selection"
+     ) %>%
+      modify_caption("**Summary of hgi_pedigree and hgi_genetic_test among eligible including randomized**") %>%
+      bold_labels()
+
+as_gt(genetic)
+
+```
+
+## Summary of er_gene among eligible including randomized
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# Selecting the patient_id column from the eligible sample  and combine er_gene question for summary statistics 
+er_gene<- original_data_with_new_race %>% 
+  filter(patient_id %in% (sample %>% filter(category == 'eligible') %>% pull(patient_id))) %>% 
+  dplyr::select(patient_id, er_gene.factor) %>%
+  na.omit() %>%
+  full_join(e,by="patient_id") %>% 
+  tbl_summary( 
+  statistic = list(patient_id ~ "{n_distinct}" ) ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of er_gene among eligible including randomized**") %>%
+  bold_labels()
+
+as_gt(er_gene)
+```
+
+## Summary of hgi_genetic_test hgi_pseen_before among all consented/screened
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+# Selecting the patient_id column from the all sample  
+a<- sample %>% dplyr::select(patient_id)
+# 
+# A<-NAC17 %>%
+# dplyr::select(patient_id,starts_with(c("hgi_pseen_before", "hgi_genetic_test"))) %>% na.omit() %>% right_join(a,by="patient_id")
+
+# 1215# 2201# 3101  multiple selection from some questions("hgi_genetic_test");
+ 
+
+hgi<- NAC17 %>% 
+dplyr::select(patient_id,starts_with(c("hgi_pseen_before", "hgi_genetic_test"))) %>% 
+  right_join(a,by="patient_id") %>%
+  tbl_summary(
+    statistic = list(patient_id ~ "{n_distinct}" ),
+      type = list(starts_with("hgi") ~ "categorical") ) %>%  
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of hgi_genetic_test, hgi_pseen_before among all consented/screened**") %>%
+  bold_labels() %>%
+  modify_footnote(
+    all_stat_cols() ~ "N is greater than PatientID is due to multiple selection")
+
+
+as_gt(hgi)
+```
+
+## Blood Collection Barcode(Redcap) and plasma_grading(clinical level data)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# NAC30 Baseline Blood Collection(barcode variables:b1_barcode1, b1_barcode2)   and  NAC38 Follow-up Blood Collection ( barcode variables: bv_plas_barcode1, bv_plas_barcode2)
+
+
+# Selecting relevant columns and converting them to character type
+blood_barcode <- original_data_with_new_race %>%
+  select(patient_id, b1_barcode1, b1_barcode2, bv_plas_barcode1, bv_plas_barcode2, redcap_event_name.factor,redcap_data_access_group.factor) %>%
+  # filter(patient_id %in% e$patient_id) %>% 
+  mutate(across(starts_with("b1_") | starts_with("bv_plas_"), as.character)) %>%
+  # Reshaping the data into longer format
+  pivot_longer(
+    cols = c("b1_barcode1", "b1_barcode2", "bv_plas_barcode1", "bv_plas_barcode2"),
+    names_to = "name",
+    values_to = "barcode"
+  ) %>%
+  # Filtering out rows with empty barcodes
+  filter(barcode != "") %>%
+  # Checking if all barcodes for each patient are unique
+  mutate(all_unique = ifelse(length(unique(barcode)) == n(), TRUE, FALSE)) 
+
+cat("Each Blood Barcode Unique Status: ",paste(length(unique(blood_barcode$barcode)) == nrow(blood_barcode)))
+
+dup_blood_barcode<-blood_barcode %>% 
+  group_by(barcode) %>% 
+  summarise(count_barcode = n()) %>% 
+  # count(barcode)%>% 
+  filter(count_barcode >=2 ) %>% 
+  left_join(blood_barcode %>%
+  dplyr::select(-all_unique), by = "barcode") %>% 
+  mutate(status ='Duplicated Blood Barcode',
+         Note = ifelse(patient_id %in% c("2501","2506","1303"),"Discussed",NA)) %>% 
+  filter(patient_id != "2501")
+
+view(dup_blood_barcode)
+## -99 is ok to use to indicate the lost the tube;
+dup_blood_barcode %>% kable()
+
+
+plasma_grading <- clinical_level %>%
+  dplyr::select(starts_with("plgr")) %>%
+  dplyr::full_join(blood_barcode %>% dplyr::select(patient_id,barcode,redcap_event_name.factor), by = c("plgr_barcode" = "barcode")) %>% 
+  filter(!is.na(plgr_version))
+
+
+plasma_grading_not_analyzed<- blood_barcode %>% filter(patient_id %in% r$patient_id) %>% 
+  filter(!barcode %in% plasma_grading$plgr_barcode) %>% 
+  select(-all_unique)
+
+
+write.csv(plasma_grading_not_analyzed,"plasma_grading_not_analyzed_Sep3.csv")
+# plasma_grading %>% filter(is.na(patient_id)) %>% select(patient_id,plgr_barcode)
+
+# view(plasma_grading)
+ 
+# Assuming plasma_grading is your data frame
+plasma_grading_gt50 <- plasma_grading %>%
+  filter(plgr_concentration >= 50) %>%
+  select(patient_id, plgr_concentration)
+
+# Calculate percentage of samples with plasma NAC >= 50 ng/mL
+# percentage_gt50 <- round((nrow(plasma_grading_gt50) / nrow(plasma_grading)) * 100,2)
+
+summary_stats <- plasma_grading %>%
+  mutate(is_gt50 = plgr_concentration >= 50) %>%
+  summarise(
+    total_samples = n(),
+    gt50_samples = sum(is_gt50),
+    percentage_gt50 = (gt50_samples / total_samples) * 100
+  )
+
+
+plasma_grading %>% 
+   # filter(patient_id %in% e$patient_id) %>% 
+  dplyr::select(patient_id,plgr_concentration) %>% 
+ tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      ),
+        patient_id ~ "{n_distinct}"
+      )
+     ) %>%  
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of plgr_concentration among eligible patients**") %>%
+  bold_labels()
+
+
+ 
+print("Study IDs with plasma NAC >= 50 ng/mL:")
+plasma_grading_gt50 %>% kable()
+
+
+print(paste("Percentage of samples with plasma NAC >= 50 ng/mL:"))
+summary_stats %>% kable()
+```
+
+## NAC 11 Summary of screening Ocular Exam
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+other_var <- c(
+  "oc_lidsp_od",
+  "oc_lidsp_os",
+  "oc_conjsp_od",
+  "oc_conjsp_os",
+  "oc_corneasp_od",
+  "oc_corneasp_os",
+  "oc_acsp_od",
+  "oc_acsp_os",
+  "oc_irissp_od",
+  "oc_irissp_os",
+  "oc_pupilsp_od",
+  "oc_pupilsp_os",
+  "oc_lenssp_od",
+  "oc_lenssp_os",
+  "oc_vitreoussp_od",
+  "oc_vitreoussp_os",
+  "oc_headsp_od",
+  "oc_headsp_os",
+  "oc_periretinasp_od",
+  "oc_periretinasp_os",
+  "oc_maculasp_od",
+  "oc_maculasp_os"
+)
+
+
+ 
+
+
+NAC11_other<-  original_data_with_new_race %>%
+  dplyr::select(patient_id,redcap_event_name,all_of(other_var))  %>% 
+  filter(redcap_event_name %in% c("screening_arm_1"))  
+
+                
+NAC11_screening <- original_data_with_new_race %>%
+  dplyr::select(patient_id, redcap_event_name, ec_eye.factor, starts_with("oc_")& ends_with("factor") ) %>%
+  filter(redcap_event_name %in% c("screening_arm_1")) %>%
+  filter(!oc_lid_abn_od.factor == "") %>%  
+  filter(patient_id %in% e$patient_id) %>% 
+  mutate(
+    across(ends_with("od.factor"), ~ if_else(ec_eye.factor == "OS only (left only)", NA_character_, .)),
+    across(ends_with("os.factor"), ~ if_else(ec_eye.factor == "OD only (right only)", NA_character_, .)))
+
+ 
+ 
+exclude_empty_columns <- function(data) {
+  empty_columns <- colSums(is.na(data)) == nrow(data)
+  data[, !empty_columns, drop = FALSE]
+}
+
+# NAC11_screening<- exclude_empty_columns(NAC11_screening )
+NAC11_other<- exclude_empty_columns(NAC11_other)  
+ 
+
+NAC11_other <- NAC11_other %>%
+  filter_at(vars(oc_lidsp_od, oc_lidsp_os, oc_conjsp_od, oc_conjsp_os,
+                 oc_corneasp_od, oc_corneasp_os, oc_irissp_od, oc_irissp_os,
+                 oc_pupilsp_os, oc_lenssp_od, oc_lenssp_os, oc_vitreoussp_od,
+                 oc_vitreoussp_os, oc_headsp_od, oc_headsp_os, oc_periretinasp_od,
+                 oc_periretinasp_os, oc_maculasp_od, oc_maculasp_os),
+            any_vars(. != ""))
+
+# Select columns related to oc_cystoid and filter based on the condition
+oc_cystoid_filtered <- NAC11_screening %>%
+  # Select patient_id and columns starting with "oc_cystoid_"
+  select(patient_id, starts_with("oc_cystoid_"))%>%
+  # Replace "No" with NA in columns starting with "oc_cystoid_"
+  mutate(across(starts_with("oc_cystoid_"), ~ ifelse(. == "No", NA, .))) %>%
+  # Filter rows where at least one "oc_cystoid_" column is not NA
+  filter(across(starts_with("oc_cystoid_"), ~ !is.na(.))) 
+
+
+# write.xlsx(NAC11_other,file = paste0("nac11_ocular_exam_Specify_other_abnormality", Sys.Date(), ".xlsx"))
+           
+# NAC11_baseline<- original_data_with_new_race %>%
+#   dplyr::select(patient_id, redcap_event_name, ec_eye.factor, starts_with("oc_") & ends_with("factor")) %>%
+#   filter(redcap_event_name %in% c("baseline_arm_1")) %>%
+#   filter(!oc_lid_abn_od.factor == "") %>%  
+#   filter(patient_id %in% (sample %>% filter(category == 'eligible') %>% pull(patient_id))) %>% 
+#   mutate(
+#     across(ends_with("od.factor"), ~ if_else(ec_eye.factor == "OS only (left only)", NA_character_, .)),
+#     across(ends_with("os.factor"), ~ if_else(ec_eye.factor == "OD only (right only)", NA_character_, .)))
+# 
+# NAC11_baseline<- exclude_empty_columns(NAC11_baseline)
+
+
+oc_cystoid_filtered  %>%  
+  right_join(e, by ="patient_id") %>% 
+  tbl_summary(
+    statistic = list(patient_id ~ "{n_distinct}" ),
+      type = list(starts_with("oc_") ~ "categorical") ) %>%  
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of screening Ocular Exam among eligible patients**") %>%
+  bold_labels()
+ 
+
+
+
+oc_cystoid_filtered  %>%  
+  right_join(r, by ="patient_id") %>% 
+  tbl_summary(
+    statistic = list(patient_id ~ "{n_distinct}" ),
+      type = list(starts_with("oc_") ~ "categorical") ) %>%  
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of screening Ocular Exam among randomized patients**") %>%
+  bold_labels()
+ 
+ 
+```
+
+## NAC26 FST_eye_examined by site;
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+fst_eye_examined<- original_data_with_new_race %>% 
+   dplyr::select(patient_id,redcap_data_access_group, fst_eye_examined.factor) %>% na.omit()  %>% 
+   full_join(e,by="patient_id")
+  
+
+           
+fst_eye_examined %>% 
+  tbl_summary(
+    statistic = list(patient_id ~ "{n_distinct}" )) %>%  
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of FST by site**") %>%
+  bold_labels()
+   
+```
+
+##	NAC 07 Q22 diagnosis of RP age
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+age <- eye_level_data1 %>% 
+  left_join(original_data_with_new_race %>% dplyr::select(patient_id,ph_diag_rp_age ) %>% na.omit(),by ="patient_id") %>%  dplyr::select(patient_id,Age,ph_diag_rp_age ) %>% 
+  mutate(RP_diagnosis_years = Age - ph_diag_rp_age ) %>% 
+  unique()  
+
+label(age$RP_diagnosis_years)="How many years since RP diagnosis"
+
+  
+age %>% 
+   tbl_summary( 
+  statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      ),
+        patient_id ~ "{n_distinct}"
+      ),
+    type = list(starts_with("sms_") ~ "categorical") ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    all_stat_cols() ~ " "
+  ) %>%
+  modify_caption("**Summary of Age for RP diagnosis**") %>%
+  bold_labels()
+
+ 
+```
+
+## Check NAC11 Ocular Exam date and rd_date should be equal. (Note: Review with team during Thurdsay Meeting, Not display in summary report. )
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+ID<- c("2002", "2004", "2721", "2722", "2803", "2908", "2910", "2911", "2913", "2914", "2915", "2917", "2918", "2919", "2920", "2921", "2923", "2924", "3503","2927","2928")
+
+two_dates_should_same<- original_data_with_new_race %>% 
+  select(patient_id,redcap_data_access_group,redcap_event_name,oc_examdt,rd_date) %>% 
+  filter(rd_date!='') %>% 
+  mutate(Diff = ifelse(oc_examdt==rd_date,"TRUE","FALSE")) %>% 
+  filter(Diff == "FALSE") %>% 
+  select(-Diff) %>% 
+  mutate(Note = case_when(
+    patient_id %in% ID ~ "Discussed with Team on July 18 ",
+    patient_id %in% c("2406","3108") ~ "Discussed with Team on Aug 1",
+    TRUE ~ "New Case")) %>% 
+  filter(Note=="New Case") %>% 
+  arrange(desc(Note)) %>% 
+  filter(oc_examdt != "" & !is.na(oc_examdt))
+# oc_examdt<- original_data_with_new_race %>% 
+#   select(patient_id,redcap_data_access_group,redcap_event_name,oc_examdt,rd_date) %>% 
+#   mutate(Diff = ifelse(oc_examdt==rd_date,"TRUE","FALSE")) %>% 
+#   filter(Diff == "FALSE") %>% 
+#   select(-Diff)
+
+view(two_dates_should_same)
+
+# unique_ids <- unique(oc_examdt$patient_id)
+# formatted_ids <- paste0('"', unique_ids, '"')
+# ids_string <- paste(formatted_ids, collapse = ", ")
+# cat(ids_string)
+
+```
+
+## MP Fixation / MP Threshold: Identification of Study IDs, Eyes, and Visits with not equal to “4-2” fxstrategy or thstrategy in MP Data; Identifying Missing Follow-Up or Expert Exam IDs in Clinical Data; (Note: Review with team during Thurdsay Meeting, Not display in summary report.)
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+#get fxstrategy when it is not equal to "4-2", those need to discuss with team. meaning, error, need to inform site to fix asap.
+result1 <- original_data_with_new_race %>%
+  filter(fxstrategy != "4-2"  & !is.na(fxstrategy) & fxstrategy!="") %>%
+  select(patient_id, redcap_event_name.factor, eye=fxeye, fxstrategy)
+#get thstrategy when it is not equal to "4-2", those need to discuss with team. meaning, error, need to inform site to fix asap.
+result2 <- original_data_with_new_race %>%
+  filter(thstrategy != "4-2" &  !is.na(thstrategy) & thstrategy!="") %>%
+  select(patient_id, redcap_event_name.factor, eye= theye, thstrategy)
+
+result_non4_2<- result1 %>% full_join(result2, by = c("patient_id","redcap_event_name.factor","eye"))
+ 
+mp_threshold <- original_data_with_new_race %>% 
+  select(starts_with("th")) %>% 
+  filter(thpatient_id_calc %in% e$patient_id) 
+
+#get the mp_threshold file, it starts with "th" and eligible patients
+mp_threshold_check <- original_data_with_new_race %>% 
+  select(starts_with("th")) %>% 
+  filter(thpatient_id_calc %in% e$patient_id) %>% 
+  select(theye,thpatient_id_calc,thevent_calc, ends_with("id") ) %>% 
+   mutate(
+    check = case_when(
+      thevent_calc != "screening_arm_1" & (is.na(thfuid) | thfuid == "") ~ "missing Follow up exam ID",
+      thevent_calc == "screening_arm_1" & (is.na(thexpertid) | thexpertid == "") ~ "missing Expert Exam ID",
+      TRUE ~ NA_character_
+    )
+  ) %>% 
+  filter(check !="") 
+
+
+stored_ids <- new.env()
+stored_ids$unique_patient_ids <- mp_threshold_check %>%
+  pull(thpatient_id_calc) %>%
+  unique()
+ 
+mp_threshold_check<- mp_threshold_check %>%
+ mutate(Note = if_else(thpatient_id_calc %in% stored_ids$unique_patient_ids, "Discuss with team on Aug 8", "New Case")) %>% 
+  filter(Note == "New Case")
+
+view(mp_threshold_check)
+
+
+mp_threshold_id <- original_data_with_new_race %>% 
+  select(starts_with("th")) %>% 
+  filter(thpatient_id_calc %in% e$patient_id) %>% 
+  filter(!is.na(th_version) & !thfixloss %in% c("0%")) %>% select(thfixloss,theye,thpatient_id_calc,thevent_calc, ends_with("id") )
+ 
+
+# sent this list to Folahan on 8/1 
+# write.csv(mp_threshold_id,"Fixation Losses excluded 0%.csv")
+
+
+#summarize the thp0th for count between each group; 
+
+thp0th<- mp_threshold %>% 
+  group_by(thp0th) %>% 
+  summarise(count = n()) 
+
+#summarize for when thp0th==0, what is the range of “Threshold”, Notes:thp0th=0 is correct, others is not right value. we need figure out more;
+summary_stats <- mp_threshold %>%
+  filter(thp0th == 0) %>%
+  summarise(
+    thp0x_min = min(thp0x, na.rm = TRUE),
+    thp0x_25th = quantile(thp0x, 0.25, na.rm = TRUE),
+    thp0x_median = median(thp0x, na.rm = TRUE),
+    thp0x_75th = quantile(thp0x, 0.75, na.rm = TRUE),
+    thp0x_max = max(thp0x, na.rm = TRUE),
+    thp0y_min = min(thp0y, na.rm = TRUE),
+    thp0y_25th = quantile(thp0y, 0.25, na.rm = TRUE),
+    thp0y_median = median(thp0y, na.rm = TRUE),
+    thp0y_75th = quantile(thp0y, 0.75, na.rm = TRUE),
+    thp0y_max = max(thp0y, na.rm = TRUE)
+  )
+
+# Convert all columns to numeric if needed
+summary_stats_numeric <- summary_stats %>%
+  mutate(across(everything(), as.numeric))
+
+# Convert to long format
+summary_stats_long <- summary_stats_numeric %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("variable", "statistic"),
+    names_sep = "_",
+    values_to = "value"
+  )
+
+print("Point 0 threshold :")
+thp0th  %>% kable()
+
+
+print("Summary stats of point 0 x_deg and y_deg :")
+summary_stats_long %>% kable()
+
+
+
+```
+## Baseline Fixation Losses Summary 
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+######################################################################################
+#baseline_arm_1 fixation losses summary
+######################################################################################
+
+#baseline form color variable;
+color<-original_data_with_new_race %>% 
+  filter(patient_id %in% r$patient_id) %>% 
+  select(patient_id,redcap_event_name.factor,mpv_dot_od.factor,mpv_dot_os.factor)  %>% 
+  mutate(patient_id = as.character(patient_id)) %>% 
+  na.omit() %>% 
+  filter(redcap_event_name.factor == "Baseline")
+
+# patient level data for color;
+create_tbl_cross(color, mpv_dot_od.factor, mpv_dot_os.factor, "eye_color_cross")
+eye_color_cross %>% as_gt()
+
+
+color_long <- color %>% 
+  pivot_longer(
+    cols = starts_with("mpv"),
+    names_to = "eye",
+    values_to = "color"
+  ) %>% 
+  mutate(eye = case_when(
+    eye == "mpv_dot_od.factor" ~ "R",
+    eye == "mpv_dot_os.factor" ~ "L",
+    TRUE ~ eye
+  ))
+
+mp_threshold_b1 <- mp_threshold %>%
+  filter(thevent_calc == "baseline_arm_1") %>%
+  select(patient_id = thpatient_id_calc, thfixloss, eye = theye) %>%
+  mutate(
+    fixation_losses = as.numeric(gsub("%", "", thfixloss)),
+    patient_id = as.character(patient_id),
+    eye = as.character(eye)
+  ) %>%
+  left_join(color_long, by = c("patient_id","eye")) 
+
+mp_threshold_b2<-mp_threshold_b1 %>%
+  group_by(patient_id) %>%
+  summarize(
+    fixation_difference = abs(fixation_losses[eye == "L"] - fixation_losses[eye == "R"]))
+
+mp_threshold_b<- mp_threshold_b1 %>% left_join(mp_threshold_b2, by = "patient_id") 
+ 
+
+mp_threshold_b %>% filter(color=="Green")%>%
+ select(eye,color,fixation_losses,fixation_difference) %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      )
+    ),
+    digits = list(
+      fixation_losses ~ 1
+    ),
+    type = list(
+      all_of(starts_with("color")) ~ "categorical", 
+      fixation_losses ~ "continuous"
+    )
+      
+ 
+  ) %>%  modify_caption("**Summary of baseline fixation losses among Green**") %>%
+  bold_labels()
+
+
+
+
+mp_threshold_b %>% filter(color=="Red")%>%
+ select(eye,color,fixation_losses,fixation_difference) %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      )
+    ),
+       digits = list(
+      fixation_losses ~ 1
+    ),
+    type = all_of(starts_with("fix")) ~ "continuous"
+  ) %>%  modify_caption("**Summary of baseline fixation losses among Red**") %>%
+  bold_labels()
+
+
+
+mp_threshold_b %>% filter(color=="Orange")%>%
+ select(eye,color,fixation_losses,fixation_difference) %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      )
+    ),
+  digits = list(
+      fixation_losses ~ 1
+    ),
+    type = all_of(starts_with("color")) ~ "categorical"
+  ) %>%  modify_caption("**Summary of baseline fixation losses among Orange**") %>%
+  bold_labels()
+
+
+
+mp_threshold_b %>% 
+  select(-patient_id,-fixation_losses,-redcap_event_name.factor	) %>%
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      )
+    ),
+    
+    type = all_of(starts_with("th_")) ~ "categorical"
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    all_stat_cols() ~ " "
+  ) %>%
+  modify_caption("**Summary of baseline fixation losses among Randomized and eligible patients**") %>%
+  bold_labels()
+
+ 
+mp_threshold_b %>% 
+  filter(fixation_losses != 0) %>% 
+  select(-patient_id,-thfixloss,-redcap_event_name.factor	) %>%
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});", 
+        "{min}~{max};", 
+        "{median} [{p25} - {p75}]"
+      )
+    ),
+    digits = list(
+      fixation_losses ~ 1
+    ),
+    type = all_of(starts_with("th_")) ~ "categorical"
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    all_stat_cols() ~ " "
+  ) %>%
+  modify_caption("**Summary of baseline fixation losses among Randomized and eligible patients when fixation_losses not 0 **") %>%
+  bold_labels()
+
+
+
+
+
+```
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+######################################################################################
+#screening_arm_1 fixation losses summary
+######################################################################################
+
+```
+```{r}
+oc_lid_abn <- process_data(original_data_with_new_race, c("oc_lid_abn_od", "oc_lid_abn_os"), "Baseline", "oc_lid_abn")
+oc_conj_abn <- process_data(original_data_with_new_race, c("oc_conj_abn_od", "oc_conj_abn_os"), "Baseline", "oc_conj_abn")
+oc_cornea_abn <- process_data(original_data_with_new_race, c("oc_cornea_abn_od", "oc_cornea_abn_os"), "Baseline", "oc_cornea_abn")
+oc_ac_abn <- process_data(original_data_with_new_race, c("oc_ac_abn_od", "oc_ac_abn_os"), "Baseline", "oc_ac_abn")
+oc_iris_abn <- process_data(original_data_with_new_race, c("oc_iris_abn_od", "oc_iris_abn_os"), "Baseline", "oc_iris_abn")
+oc_pupil_abn <- process_data(original_data_with_new_race, c("oc_pupil_abn_od", "oc_pupil_abn_os"), "Baseline", "oc_pupil_abn")
+oc_lens_abn <- process_data(original_data_with_new_race, c("oc_lens_abn_od", "oc_lens_abn_os"), "Baseline", "oc_lens_abn")
+oc_vitreous_abn <- process_data(original_data_with_new_race, c("oc_vitreous_abn_od", "oc_vitreous_abn_os"), "Baseline", "oc_vitreous_abn")
+oc_head_ratio <- process_data(original_data_with_new_race, c("oc_head_ratio_od", "oc_head_ratio_os"), "Baseline", "oc_head_ratio")
+oc_periretina_abn <- process_data(original_data_with_new_race, c("oc_periretina_abn_od", "oc_periretina_abn_os"), "Baseline", "oc_periretina_abn")
+oc_macula_abn <- process_data(original_data_with_new_race, c("oc_macula_abn_od", "oc_macula_abn_os"), "Baseline", "oc_macula_abn")
+
+mp_fixation_var<- original_data_with_new_race %>%
+select(patient_id,redcap_event_name.factor,redcap_data_access_group.factor,redcap_repeat_instrument, OD_OS=fxeye,fxfixloss,fxbcea63,fxbcea95,fxdistprl)%>% 
+filter(redcap_event_name.factor == "Baseline" & redcap_repeat_instrument =="mp_fixation") %>% 
+ mutate(OD_OS = as.character(OD_OS)) %>%
+  mutate(OD_OS = case_when(
+    OD_OS == "R" ~ "OD",
+    OD_OS == "L" ~ "OS",
+    TRUE ~ OD_OS
+  ))
+
+eye_level_data_for_color_analysis <- Randomized1 %>%
+  left_join(Mean_Sensitivity1, by = c("patient_id")) %>%
+  left_join(EZ_width1, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_lid_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_conj_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_cornea_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_ac_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_iris_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_pupil_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_lens_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_vitreous_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_head_ratio, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_periretina_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_macula_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(mp_fixation_var, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  filter(!(rd_eye.factor == "OD only (right only)" & OD_OS == "OS")) %>%
+  filter(!(rd_eye.factor == "OS only (left only)" & OD_OS == "OD")) %>% 
+  select(-redcap_repeat_instrument)
+
+
+eye_level_data_for_color_analysis %>% select(-patient_id,-redcap_event_name.factor,-rd_eye.factor) %>% 
+  tbl_summary()
+ 
+```
+
+
+## Patient ID Review with Team
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+#  
+# patient_id_discussed <- c("1805","2202","2910","2911","1301", "1604","1203", "1604","1402","3215","1306","2004" ,"2714", "2801", "2915", "2917", "2920", "2921", "2923","1217", "1801", "2701",  "2702", "2704", "2705", "2706", "2707","1306", "2714", "2801", "2915", "2917", "2920", "2923", "3105", "1301", "1604", "", "1604", "3401", "", "1217", "1801", "2701", "2702", "2704", "2705", "2706", "2707")
+# 
+# patient_id_discussed <- unique(patient_id_discussed)
+# ###### this is the list of the patient_id_discussed;
+# ################################################################################################################
+# cat("Patient ID for Daisy to take notes:",
+#   PV1 %>%
+#     mutate(Notes = ifelse(patient_id %in% patient_id_discussed, 'Discussed', 'New Case')) %>%
+#     filter(Category == "Scheduled but not completed, outside window") %>%
+#     pull(patient_id) %>%
+#     paste0('"', ., '"', collapse = ', '),
+# 
+#   PV1 %>%
+#     mutate(Notes = ifelse(patient_id %in% patient_id_discussed, 'Discussed', 'New Case')) %>%
+#     filter(ad_study_meds == 0) %>%
+#     pull(patient_id) %>%
+#     paste0('"', ., '"', collapse = ', '),
+# 
+#   window %>%
+#     mutate(Notes = ifelse(patient_id %in% patient_id_discussed, 'Discussed', 'New Case')) %>%
+#     filter(randomized_window == "***Alert: Passed BSL window & NOT randomized") %>%
+#     pull(patient_id) %>%
+#     paste0('"', ., '"', collapse = ', '),
+# 
+#   CV1 %>%
+#     mutate(Notes = ifelse(patient_id %in% patient_id_discussed, 'Discussed', 'New Case')) %>%
+#     filter(Category == "Scheduled but not completed, outside window") %>%
+#     pull(patient_id) %>%
+#     paste0('"', ., '"', collapse = ', '),
+# 
+#   CV1 %>%
+#     filter(ad_study_meds == 0) %>%
+#     pull(patient_id) %>%
+#     paste0('"', ., '"', collapse = ', '),
+# 
+#   CV1 %>%
+#     mutate(Notes = ifelse(patient_id %in% patient_id_discussed, 'Discussed', 'New Case')) %>%
+#     filter(Category == "Completed Within Visit Schedule Window" & is.na(drug_used)) %>%
+#     pull(patient_id) %>%
+#     paste0('"', ., '"', collapse = ', '),
+# 
+#   sep = ", "
+# )
+# 
+# cat("\n\n")
+# #########################################################################################
+# 
+# # Print alert for patients who passed BSL window and were not randomized
+# cat("*** Alert: Passed BSL window & NOT randomized ***\n")
+# alert_ids <- window %>% 
+#   mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case')) %>% 
+#   filter(randomized_window == "***Alert: Passed BSL window & NOT randomized" ) %>% 
+#   mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
+#   filter(Notes=="New Case") %>% 
+#   pull(Notes) %>% unique()%>% kable()
+# 
+# alert_ids
+# cat("\n")
+# 
+# # Print phone call visit 1 issues
+# cat("Phone call Visit 1: Scheduled but not completed, outside window\n")
+# scheduled_not_completed_ids <- PV1 %>% 
+#   mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case')) %>% 
+#   filter(Category == "Scheduled but not completed, outside window" ) %>% 
+#   mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
+#   filter(Notes=="New Case") %>% 
+#   pull(Notes) %>% unique()%>% kable()
+# 
+# 
+# print(scheduled_not_completed_ids%>% kable())
+# cat("\n")
+# 
+# 
+# cat("Phone call Visit 1: Patient IDs of Patients Who Did Not Take Medication\n")
+# not_taking_meds_ids_phone <- PV1 %>% 
+#   mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case')) %>% 
+#   filter(ad_study_meds == 0 ) %>% 
+#   mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
+#   filter(Notes=="New Case") %>% 
+#   pull(Notes) %>% unique()
+# print(not_taking_meds_ids_phone %>% kable())
+# cat("\n")
+# 
+# # Print in-clinic follow-up visit 1 issues
+# cat("In-clinic Follow-up Visit 1: Scheduled but not completed, outside window\n")
+# scheduled_not_completed_clinic_ids <- CV1 %>% 
+#    mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case')) %>% 
+#   filter(Category == "Scheduled but not completed, outside window" ) %>% 
+#   mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
+#   filter(Notes=="New Case") %>% 
+#   pull(Notes) %>% unique()
+# print(scheduled_not_completed_clinic_ids %>% kable())
+# cat("\n")
+# 
+# cat("In-clinic Follow-up Visit 1: Patient IDs of Patients Who Did Not Take Medication\n")
+# not_taking_meds_ids_clinic <- CV1 %>% 
+#   mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case')) %>% 
+#   filter(ad_study_meds == 0 ) %>% 
+#   mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
+#   filter(Notes=="New Case") %>% 
+#   pull(Notes) %>% unique()
+# print(not_taking_meds_ids_clinic %>% kable())
+# cat("\n")
+# 
+# 
+# cat("Among M04.5 Completed Within Visit Schedule Window group, below patients did not have NAC47 psmd_visitdt filled to indicate the used or not used drug barcode.\n")
+# CV1 %>% 
+#   mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case'))  %>% 
+#   filter(Category=="Completed Within Visit Schedule Window" & is.na(drug_used)) %>% 
+#  mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
+#   filter(Notes=="New Case") %>% 
+#   pull(Notes) %>% unique()
+# cat("\n")
+
+
+########################################################
+
+cat(paste("BCVA Certification Number: ", BCVA_ISSUE$va_cert, "\n",
+          "Patient_id: ", BCVA_ISSUE$patient_id, "\n",
+          BCVA_ISSUE$BCVA_valid, "\n\n"))
+          
+cat(paste("MP Certification Number: ", MP_ISSUE$mps_tech_cert, "\n",
+          "Patient_id: ", MP_ISSUE$patient_id, "\n",
+          MP_ISSUE$MP_valid, "\n\n"))
+
+########################################################
+
+cat("drug_taken_percent lower than 85%")
+print(drug_taken_percent_discuss %>% kable() )
+cat("\n")
+
+########################################################
+# cat("The MP Fixation Form has some errors that need to be fixed")
+#"The MP Fixation Form has some errors that need to be fixed."
+# (mp(Screening)) 
+# these are the difference between chair and clinic; 
+# view(severity_ae)
+# view(ae_cause)
+
+# severity_ae %>% kable()
+# ae_cause %>% kable()
+cat("\n\n")
+cat("plasma_grading issue(missing patient_id for the blood barcode:")
+plasma_grading %>% filter(is.na(patient_id)) %>% mutate(Note="Disscussed")
+cat("\n\n")
+
+########################################################
+#important to share with team for this finding
+##########################################################
+cat("\n")
+cat("Identification of Study IDs, Eyes, and Visits with Non-4-2 fxstrategy or thstrategy in MP Data")
+non4_2<- result_non4_2 %>%
+  mutate(Notes = case_when(patient_id %in% c("3101","3405","3408") ~ "Discussed on July 29",
+                          TRUE ~ "New Case")) %>%
+  select(Notes,patient_id,redcap_event_name.factor,eye,fxstrategy,thstrategy)%>% 
+filter(Notes=="New Case")
+ 
+non4_2 %>% kable()
+cat("\n")
+
+# 
+# mp(Screening)  
+```
+
+## Write Out Weekly Report;
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# library(openxlsx)
+# # certification_check_results
+#  write.xlsx(output_list, file = paste0("Certification_Results_", Sys.Date(), ".xlsx"),
+#           sheetName = names(output_list), rowNames = FALSE)
+# 
+# 
+# write_xlsx(outgoing_barcode_issue,paste0("outgoing_barcode_issue ", Sys.Date(), ".xlsx"))
+# #
+# # # #Inventory_Report for Dr.Kong
+# write_xlsx(Distribution_summary, paste0("Dispense_Summary_",today(),".xlsx"))
+# write_xlsx(Distribution, path = paste0("Inventory_Report(C1A & C1B)", format(Sys.Date(), "%Y-%m-%d"), ".xlsx"))
+# 
+
+# Create a list of data frames with their corresponding sheet names
+
+data_list <- list(
+  "Dispense Summary" = Distribution_summary,
+  "Follow-ups before July 1" = CV_followup_index
+)
+
+# Write the data frames to different sheets in a single Excel file
+# write.xlsx(data_list, file = paste0("Dispense_Summary_", today(), ".xlsx"))
+# 
+# write_xlsx(Distribution, path = paste0("Inventory_Report(C1A & C1B)", format(Sys.Date(), "%Y-%m-%d"), ".xlsx"))
+
+# #Adverse Event ONLY write out for Dr.Kong when needed
+# write_xlsx(adverse_event, paste0("Adverse Event by ", today(),".xlsx"))
+# 
+# # fail_reasons
+# write.csv(fail,paste0("fail_reasons_",today(),".csv"))
+
+```
+
+
+
+
