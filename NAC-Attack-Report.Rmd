@@ -8,7 +8,7 @@ output:
   pdf_document: default
   df_print: paged
 params:
-  Redcap_file_download_date: "2024-09-04_1047" 
+  Redcap_file_download_date: "2024-10-09_1011" 
 ---
 
 ```{r setup, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
@@ -16,8 +16,8 @@ params:
 # "2024-07-31_1117" 
 library(ggcorrplot)
 library(labelled)
-
-setwd("C:/Users/mshi27/Downloads")
+# 
+# setwd("C:/Users/mshi27/Downloads")
 Redcap_date<- params$Redcap_file_download_date
 # clinical_filename<- paste0("C:\\Users\\mshi27\\Downloads\\NACAttackClinicLevel_DATA_",Redcap_date,".csv")
 NACAttackPrime_filename<- paste0("NACAttackPrime_R_",Redcap_date,".r")
@@ -27,7 +27,7 @@ race_reshape(new_data_name = "original_data_with_new_race")
 download_date <- as.Date(today(), format = "%Y-%m-%d")
 patient_id_discussed_for_certification<- c('2201','1902','3406','3411','2513','3902')
 # download_date <- strsplit(params$Redcap_file_download_date,"_")[[1]][1]
-clinical_filename<- "C:\\Users\\mshi27\\Downloads\\NACAttackClinicLevel_DATA_2024-09-04_1048.csv"
+clinical_filename<- "C:\\Users\\mshi27\\Downloads\\NACAttackClinicLevel_DATA_2024-10-09_1013.csv"
 ```
 
 ## Overall Numbers
@@ -40,11 +40,8 @@ redcap_var<- c("redcap_event_name.factor","redcap_repeat_instrument","redcap_rep
 
 #note:
 outcome<- c("octs_ezwdth_od","octs_ezwdth_os")#screen ez
-
 final_outcome<-  c("octv_ezwdth_od","octv_ezwdth_os") #baseline ez
-
 filter_data(original_data_with_new_race,"Screening")
-
 filter_data(original_data_with_new_race,"Baseline") 
 
 
@@ -494,15 +491,24 @@ Visual_Acuity1 <- process_data(original_data_with_new_race, c("vav_etdrs_od", "v
 EZ_width1 <- process_data(original_data_with_new_race,c("octv_ezwdth_od", "octv_ezwdth_os"),"Baseline","EZ_width")
 
 
+
+# AAA<-original_data_with_new_race %>% 
+#   filter(patient_id %in% c("2101","2102")) %>%
+#   select(patient_id,redcap_event_name,mpv_sens_od,mpv_sens_os,thavgsensitivity) 
+
 #Randomized file is for ec_eye:  eligible for screening 
 Randomized<-original_data_with_new_race %>%
    dplyr::filter(patient_id %in% r$patient_id)  %>% 
-   dplyr::select(patient_id,Age,Sex,Race,ec_eye.factor) %>% 
-   na.omit()
+   dplyr::select(patient_id,Age,Sex,Race,ec_eye.factor,redcap_event_name.factor) %>% 
+  na.omit() %>% 
+  mutate(Age = as.numeric(Age)) %>%
+  # Add OD_OS column with repeated values "OD" and "OS"
+  tidyr::expand_grid(OD_OS = c("OD", "OS")) %>%
+  arrange(patient_id)
   
   
 eye_level_data <- Randomized %>%
-  left_join(Sphere, by = c("patient_id"))%>%
+  left_join(Sphere, by = c("patient_id","OD_OS","redcap_event_name.factor"))%>%
   left_join(Central_Thickness, by = c("patient_id","OD_OS","redcap_event_name.factor"))%>%
   left_join(Visual_Acuity, by = c("patient_id","OD_OS","redcap_event_name.factor")) %>% 
   left_join(Mean_Sensitivity,by = c("patient_id", "OD_OS","redcap_event_name.factor")) %>% 
@@ -534,13 +540,16 @@ eye_level_data <- Randomized %>%
 #Randomized1 file is for rd_eye.factor:  eligible for Randomized patients; 
 Randomized1<-original_data_with_new_race %>%
    dplyr::filter(patient_id %in% r$patient_id)  %>% 
-   dplyr::select(patient_id,Age,Sex,Race,rd_eye.factor) %>% 
-   na.omit() %>% 
-  mutate(Age = as.numeric(Age))
+   dplyr::select(patient_id,Age,Sex,Race,rd_eye.factor,redcap_event_name.factor) %>% 
+  na.omit() %>% 
+  mutate(Age = as.numeric(Age)) %>%
+  # Add OD_OS column with repeated values "OD" and "OS"
+  tidyr::expand_grid(OD_OS = c("OD", "OS")) %>%
+  arrange(patient_id)
  
 
 eye_level_data1 <- Randomized1 %>%
-  left_join(Sphere1, by = c("patient_id"))%>%
+  left_join(Sphere1, by = c("patient_id","OD_OS","redcap_event_name.factor"))%>%
   left_join(Central_Thickness1, by = c("patient_id","OD_OS","redcap_event_name.factor"))%>%
   left_join(Visual_Acuity1, by = c("patient_id","OD_OS","redcap_event_name.factor")) %>% 
   left_join(Mean_Sensitivity1,by = c("patient_id", "OD_OS","redcap_event_name.factor")) %>% 
@@ -1019,14 +1028,17 @@ dispensed_drug_CERT<-dispensed_drug_CERT1 %>%
 
 
 June_6<- c("1801", "1803", "1901", "1902", "2908", "2910", "2911", "2913", "2915", "2917", "2918", "2919", "2920", "2923", "3401", "3403", "3404", "3405", "3406")  
-
-
+Sep18<- c("2101")
+Sep25<-c("2516","3802")
 ##this cert_drug_dispenser is use during the weekly meeting;
 cert_drug_dispenser<-dispensed_drug_CERT %>% 
   filter(dispensed_drug_valid_cert1 != 'Certification for drug dispenser is valid' & 
          dispensed_drug_valid_cert2 != 'Certification for drug dispenser is valid' ) %>% 
   dplyr::select(-br_studyinv_cert,-staff_medlicense,-staff_medlicense_expdt,-medical_license_valid) %>% unique() %>% 
-  mutate(Notes_Discussed_Date = ifelse(patient_id %in% June_6,"2024-06-06",NA))
+  mutate(Notes_Discussed_Date = ifelse(patient_id %in% June_6,"2024-06-06",NA),
+         Notes_Discussed_Date = ifelse(patient_id %in% Sep18,"2024-09-18",NA),
+          Notes_Discussed_Date = ifelse(patient_id %in% Sep25,"2024-09-25",NA)
+         )
 
 
 # print out the discussed IDs
@@ -1072,7 +1084,8 @@ BCVA_CERT <- certification_redcap %>%
       TRUE ~ "Warning: BCVA Certification date outside of the visit date"
     ),
     Report_date = Sys.Date(),
-    month_to_expire = round(as.numeric(difftime(as.Date(`expiration date`), Sys.Date(), units = "days") / 30), 0),
+    max_expiration_date = pmax(`expiration date`, `expiration date2`, `expiration date3`, `expiration date4`, na.rm = TRUE),
+    month_to_expire = round(as.numeric(difftime(as.Date(max_expiration_date), Sys.Date(), units = "days") / 30), 0),
     expire_soon = ifelse(month_to_expire <= 3, "Warning: less than 3 months to expire.", "No")
   ) %>%
   select(-`maia mp quiz`, -`mp scan report`) %>% 
@@ -1878,7 +1891,6 @@ filter(redcap_event_name.factor=={{event_month}})  %>%
   full_join(rd %>% select(-rd_date),by=c("patient_id")) 
 
 
-
 CV1_result <- calculate_dates(window, {{visit}}) %>% 
   left_join(CV1, by = "patient_id") %>% 
   mutate(Category = case_when(
@@ -2017,6 +2029,14 @@ CV_followup_index <- CV %>%
  
 summary_of_followup_visit_plot1(PV1)
 
+summary_of_followup_visit_plot1(PV2)
+
+summary_of_followup_visit_plot1(PV3)
+
+summary_of_followup_visit_plot1(PV4)
+
+summary_of_followup_visit_plot1(PV5)
+
 ```
 
 
@@ -2036,8 +2056,10 @@ print("Among M04.5 Completed Within Visit Schedule Window group, below patients 
 CV1 %>% filter(Category=="Completed Within Visit Schedule Window" & is.na(drug_used)) %>% pull(patient_id)
 
 summary_of_followup_visit_plot(CV1)
-
-
+summary_of_followup_visit_plot(CV2)
+summary_of_followup_visit_plot(CV3)
+summary_of_followup_visit_plot(CV4)
+summary_of_followup_visit_plot(CV5)
 #Note: sdoct_dt   we can not use this date to calculate the drug days take since 4.5 month do not have sdoct_dt filled
 
 
@@ -2088,70 +2110,25 @@ percentile_df <- data.frame(
 # Print the data frame
 percentile_df %>% kable()
 
-drug_taken_percent_discuss<- CV1 %>% filter(drug_taken_percent <= 85) %>% select(patient_id,drug_taken_percent) %>% 
+drug_taken_percent_discuss<- CV1 %>% filter(drug_taken_percent < 85) %>% select(patient_id,drug_taken_percent) %>% 
 mutate(Notes = 
 case_when( patient_id %in% c('1203','1210','1211','1605') ~ "Discussed on July 11th",
  patient_id %in% c('2908') ~ "Sent Email to Izzie on July 25th",
+ patient_id %in% c("1214", "1223"," 1304", "1607", "2002", "2801", "2911"," 2920", "3404") ~ "Discussed on Sep 12",
+ patient_id %in% c('2920') ~ "Discussed on Sep 18",
  TRUE ~ "New Case") ) 
 
 drug_taken_percent_discuss %>% kable()
-# # Create boxplot with enhanced aesthetics, narrower box width, and no x-axis
-# ggplot(CV1, aes(y = drug_taken_percent)) +
-#   geom_boxplot(width = 0.1, fill = "skyblue", color = "darkblue", outlier.color = "red", outlier.shape = 16, outlier.size = 2) +
-#   scale_y_continuous(labels = percent_format, limits = c(0, 100)) +
-#   labs(title = "Boxplot of Drug Taken Percent",
-#        y = "Drug Taken Percent") +
-#   theme_minimal() +
-#   theme(
-#     plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
-#     axis.title.x = element_blank(),
-#     axis.text.x = element_blank(),
-#     axis.ticks.x = element_blank(),
-#     axis.title.y = element_text(size = 12),
-#     axis.text.y = element_text(size = 10)
-#   )
 
-# 
-# # Create boxplot with enhanced aesthetics, narrower box width, and no x-axis
-# ggplot(CV1, aes(y = drug_taken_percent)) +
-#   geom_boxplot(width = 0.1, fill = "skyblue", color = "darkblue", outlier.color = "red", outlier.shape = 16, outlier.size = 2) +
-#   scale_y_continuous(labels = percent_format, limits = c(0, 100)) +
-#   labs(title = "Boxplot of Drug Taken Percent",
-#        y = "Drug Taken Percent") +
-#   theme_minimal() +
-#   theme(
-#     plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
-#     axis.title.x = element_blank(),
-#     axis.text.x = element_blank(),
-#     axis.ticks.x = element_blank(),
-#     axis.title.y = element_text(size = 12),
-#     axis.text.y = element_text(size = 10)
-#   )
-# 
-# 
-# # Create boxplot with enhanced aesthetics, narrower box width, and large x scale
-# ggplot(CV1, aes(x = factor(1), y = drug_taken_percent)) +
-#   geom_boxplot(width = 0.1, fill = "skyblue", color = "darkblue", outlier.color = "red", outlier.shape = 16, outlier.size = 2) +
-#   scale_y_continuous(labels = percent_format, limits = c(0, 100)) +
-#   scale_x_discrete(expand = expansion(mult = c(0.1, 0.1))) +  # Add more space around the boxplot
-#   labs(title = "Boxplot of Drug Taken Percent",
-#        y = "Drug Taken Percent",
-#        x = "") +
-#   theme_minimal() +
-#   theme(
-#     plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
-#     axis.title.x = element_blank(),
-#     axis.text.x = element_blank(),
-#     axis.ticks.x = element_blank(),
-#     axis.title.y = element_text(size = 12),
-#     axis.text.y = element_text(size = 10)
-#   )
+view(drug_taken_percent_discuss)
+
 
 ```
 
 ## Summary of Unused Tablets
 
 ```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
 CV1 %>% filter(!ex_reason %in% '4') %>% 
   dplyr::select(patient_id,total_tablets_unused = total_unused) %>% 
   filter(!is.na(total_tablets_unused) & total_tablets_unused!=0 )%>% 
@@ -2212,7 +2189,6 @@ site_mapping <- c(
   "45 Univ Penn" = "45_univ_penn"
 )
  
-
 #read inventory data from Dr.kong
 C1A_US<- read.csv("C:\\Users\\mshi27\\Downloads\\C1A US dist to sites and receipt_XK2024-01-15.csv")
 C1A_US <- C1A_US %>%  setNames(tolower(names(.))) %>% mutate(series ="C1A",exp.date = format(anytime(exp.date), "%Y-%m-%d")) 
@@ -2221,26 +2197,50 @@ C1A_US <- C1A_US %>%  setNames(tolower(names(.))) %>% mutate(series ="C1A",exp.d
 C1A_EU<- read.csv("C:\\Users\\mshi27\\Downloads\\C1A EU dist to sites and receipt_XK2024-06-02.csv")
 C1A_EU<- C1A_EU %>% setNames(tolower(names(.))) %>% mutate(series ="C1A",exp.date = format(anytime(exp.date), "%Y-%m-%d"))
 # C1A_UK <-  read.csv("C:\\Users\\mshi27\\Downloads\\C1A UK dist to sites and receipt_XK2024-03-19.csv")
-C1A_UK <-  read.csv("C:\\Users\\mshi27\\Downloads\\C1A UK dist to sites and receipt_XK2024-06-26.csv")
+C1A_UK <-  read.csv("C:\\Users\\mshi27\\Downloads\\C1A UK dist to sites and receipt_XK2024-09-24.csv")
 C1A_UK<- C1A_UK %>%  setNames(tolower(names(.))) %>% mutate(series ="C1A") 
+
+C1C_UK <-  read.csv("C:\\Users\\mshi27\\Downloads\\C1C UK dist to sites and receipt_XK2024-09-24.csv")
+C1C_UK<- C1C_UK %>%  setNames(tolower(names(.))) %>% mutate(series ="C1C") 
 
 # C1B_US<- read.csv("C:\\Users\\mshi27\\Downloads\\C1B US dist to sites and receipt_XK2024-05-30.csv")
 # C1B_US<- read.csv("C:\\Users\\mshi27\\Downloads\\C1B US dist to sites and receipt_XK2024-06-25.csv")
-C1B_US <- read.csv("C:\\Users\\mshi27\\Downloads\\C1B US dist to sites and receipt_XK2024-08-09.csv")
-C1B_US<-C1B_US %>% mutate(test = ifelse(site==actual.site,"same","no")) %>% 
-  mutate(site =  ifelse(test == "no", actual.site, site)) %>% 
-  select(-actual.site,-test)
+# C1B_US <- read.csv("C:\\Users\\mshi27\\Downloads\\C1B US dist to sites and receipt_XK2024-09-26.csv")
+C1B_US <- read.csv("C:\\Users\\mshi27\\Downloads\\C1B US dist to sites and receipt_XK2024-10-07.csv")
 
  
 
-C1B_US <- C1B_US %>% setNames(tolower(names(.))) %>% mutate(series = "C1B")  
 
-C1C_NL<- read.csv("C:\\Users\\mshi27\\Downloads\\C1C NL dist to sites and receipt_XK2024-06-26.csv") 
+# vars_C1B_US <- colnames(C1B_US)
+# vars_C1B_US1 <- colnames(C1B_US1)
+# 
+# # Find variables in C1B_US but not in C1B_US1
+# diff_in_C1B_US <- setdiff(vars_C1B_US, vars_C1B_US1)
+# 
+# # Find variables in C1B_US1 but not in C1B_US
+# diff_in_C1B_US1 <- setdiff(vars_C1B_US1, vars_C1B_US)
+# 
+# # Output the differences
+# cat("Variables in C1B_US but not in C1B_US1:\n", diff_in_C1B_US, "\n")
+# cat("\nVariables in C1B_US1 but not in C1B_US:\n", diff_in_C1B_US1)
+
+C1B_US <- C1B_US %>% setNames(tolower(names(.))) %>% 
+  mutate(test = ifelse(site==actual.site,"same","no")) %>% 
+  mutate(site =  ifelse(test == "no", actual.site, site),
+         series = "C1B") %>% 
+  select(-actual.site,-test,-arrive.date)%>% 
+  rename(arrive.date=actual.date) 
+  
+ 
+C1C_NL<- read.csv("C:\\Users\\mshi27\\Downloads\\C1C NL dist to sites and receipt_XK2024-10-09.csv") 
+
+ 
+
 C1C_NL<- C1C_NL %>% setNames(tolower(names(.))) %>% mutate(series = "C1C") 
  
  
 
-ALL<- rbind(C1A_US,C1A_EU,C1A_UK,C1B_US,C1C_NL) %>% 
+ALL<- rbind(C1A_US,C1A_EU,C1A_UK,C1B_US,C1C_NL,C1C_UK) %>% 
   setNames(tolower(names(.))) %>%
   filter(!usable %in% c("No","no","NO")) %>% 
   mutate(
@@ -2284,23 +2284,16 @@ clinical_nac66_plasma_shipment <- nac66_plasma_shipment %>%
     values_to = "ps_barcode"
   )
 
-# NAC47_barcode_baseline<- Baseline %>% 
-#   dplyr::select(
-#     redcap_data_access_group,rd_assignment.factor,all_of(demographic_variable),
-#     outgoing_date=psmd_outgoing_dt1,starts_with(c("psmd_out","psmd_in"))& ends_with("_id")) %>% 
-#   filter(!redcap_repeat_instance %in% c(1,2))%>%
-#   dplyr::select(-redcap_var) %>% 
-#   mutate(across(everything(), as.character))
 
 #process barcode to longformat from Redcapdata
 NAC47_barcode<- original_data_with_new_race %>% 
   dplyr::select(
-    redcap_data_access_group,rd_assignment.factor,all_of(demographic_variable),
-    outgoing_date=psmd_outgoing_dt1,starts_with(c("psmd_out","psmd_in"))& ends_with("_id")) %>% 
+  redcap_data_access_group,rd_assignment.factor,all_of(demographic_variable),
+  outgoing_date=psmd_outgoing_dt1,starts_with(c("psmd_out","psmd_in"))& ends_with("_id")) %>% 
   filter(!redcap_repeat_instance %in% c(1,2))%>%
   dplyr::select(-redcap_var) %>% 
-  mutate(across(everything(), as.character))  %>% 
-  filter(rd_assignment.factor != "" |!is.na(rd_assignment.factor))
+  mutate(across(everything(), as.character))%>% 
+  filter(outgoing_date != "" & !is.na(outgoing_date))
 
 
  
@@ -2325,11 +2318,12 @@ mutate(
   unique()
  
 
-patient_id_discussed_for_outgoing_barcode <- c("1201","3404")
+patient_id_discussed_for_outgoing_barcode <- c("1201","3404","2804")
 
 outgoing_barcode_issue<- outgoing_barcode  %>% 
   dplyr::filter(drug_inventory==FALSE & !is.na(barcode)&barcode!="" ) %>% 
-  mutate(Notes = ifelse(patient_id %in% patient_id_discussed_for_outgoing_barcode , 'Discussed', NA))
+  mutate(Notes = ifelse(patient_id %in% patient_id_discussed_for_outgoing_barcode , 'Discussed', NA)) %>% 
+  filter(Notes != 'Discussed')
 
 view(outgoing_barcode_issue)
 
@@ -2339,7 +2333,7 @@ view(outgoing_barcode_issue)
 
 # https://livejohnshopkins-my.sharepoint.com/:f:/r/personal/xkong4_jh_edu/Documents/RP%20NAC%20Trial%20Planning/RP%20NAC%20Trial%20(Group)/Drug%20distribution%20related/Distribution%20to%20sites?csf=1&web=1&e=NI4bgt
 
-
+# 
 # table(Distribution$letter)
 
 # I've augmented the dataset with a new column named 'series' to differentiate between "C1A" and "C1B". This additional column can be employed for filtering based on specific requirements. The 'Dispense status' column encompasses four distinct levels: "Dispensed", "Destructed", "To be used", and "Planned but not received yet".
@@ -2437,11 +2431,13 @@ rand <- sample %>%
 withdraw_date <- sample %>% 
   dplyr::select(site = redcap_data_access_group, patient_id, ex_withdrawdt) %>% 
   filter(ex_withdrawdt != "" | !is.na(ex_withdrawdt)) %>% 
-  mutate(withdraw  = paste0("Patient ID : ",patient_id, " Date of withdraw :", ex_withdrawdt)%>% toString()) %>% 
-   mutate(site = as.character(site)) %>% 
-  select(site, withdraw)
-  #make prediction of next rd assignment; 
+   group_by(site) %>% 
+  mutate(withdraw  = paste0("Patient ID : ",patient_id, " Date of withdraw :", ex_withdrawdt)%>% toString())  %>% 
+  mutate(site = as.character(site)) %>% 
+  select(site, withdraw) %>% unique()
 
+ 
+   
 redcap_rand_list<- read.csv( "C:\\Users\\mshi27\\Desktop\\NAC Attack\\redcap_rand_list_XK Sep_27_2023.csv")
 DAGs<- read.csv( "C:\\Users\\mshi27\\Desktop\\NAC Attack\\NACAttackPrime_DAGs_2023-08-24.csv")
  
@@ -2869,10 +2865,19 @@ view(dup_blood_barcode)
 dup_blood_barcode %>% kable()
 
 
+
+demon<-original_data_with_new_race %>% select(patient_id,b1_visitdt,b1_drawn_tm,Age,Sex,Race,redcap_data_access_group) %>% 
+  filter(b1_visitdt!="")
+
+
 plasma_grading <- clinical_level %>%
   dplyr::select(starts_with("plgr")) %>%
   dplyr::full_join(blood_barcode %>% dplyr::select(patient_id,barcode,redcap_event_name.factor), by = c("plgr_barcode" = "barcode")) %>% 
-  filter(!is.na(plgr_version))
+  filter(!is.na(plgr_version)) 
+
+
+plasma_data_for_analysis<- plasma_grading %>% select(patient_id,plgr_concentration)%>% 
+  left_join(demon, by= "patient_id")
 
 
 plasma_grading_not_analyzed<- blood_barcode %>% filter(patient_id %in% r$patient_id) %>% 
@@ -2880,7 +2885,7 @@ plasma_grading_not_analyzed<- blood_barcode %>% filter(patient_id %in% r$patient
   select(-all_unique)
 
 
-write.csv(plasma_grading_not_analyzed,"plasma_grading_not_analyzed_Sep3.csv")
+write.csv(plasma_grading_not_analyzed,"plasma_grading_not_analyzed_Sep25.csv")
 # plasma_grading %>% filter(is.na(patient_id)) %>% select(patient_id,plgr_barcode)
 
 # view(plasma_grading)
@@ -2927,6 +2932,12 @@ plasma_grading_gt50 %>% kable()
 
 print(paste("Percentage of samples with plasma NAC >= 50 ng/mL:"))
 summary_stats %>% kable()
+
+
+
+###############################
+
+
 ```
 
 ## NAC 11 Summary of screening Ocular Exam
@@ -3108,6 +3119,7 @@ two_dates_should_same<- original_data_with_new_race %>%
   mutate(Note = case_when(
     patient_id %in% ID ~ "Discussed with Team on July 18 ",
     patient_id %in% c("2406","3108") ~ "Discussed with Team on Aug 1",
+    patient_id %in% c("2930","2931") ~ "Discussed with Team on 9/18 ",
     TRUE ~ "New Case")) %>% 
   filter(Note=="New Case") %>% 
   arrange(desc(Note)) %>% 
@@ -3224,9 +3236,11 @@ thp0th  %>% kable()
 print("Summary stats of point 0 x_deg and y_deg :")
 summary_stats_long %>% kable()
 
-
+fixation<- original_data_with_new_race %>% select(patient_id,redcap_event_name,redcap_repeat_instrument,thfixloss,fxfixloss) %>% 
+  filter(redcap_event_name =="baseline_arm_1")
 
 ```
+
 ## Baseline Fixation Losses Summary 
 
 ```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
@@ -3390,13 +3404,25 @@ mp_threshold_b %>%
 
 ```
 
+
 ```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
 ######################################################################################
 #screening_arm_1 fixation losses summary
 ######################################################################################
+process_data <- function(data, columns, redcap_event, prefix) {
+  data %>%
+    mutate(across(all_of(columns), ~ unclass(.))) %>%
+    select(redcap_event_name.factor, patient_id, all_of(columns)) %>% 
+    filter(redcap_event_name.factor == redcap_event) %>% 
+    pivot_longer(cols = all_of(columns), values_to = prefix) %>%
+    filter(!is.na(.data[[prefix]])) %>%  # Filter out empty values
+    arrange(desc(patient_id)) %>%
+    mutate(OD_OS = toupper(substr(name, nchar(name) - 1, nchar(name)))) %>%
+    select(patient_id, redcap_event_name.factor, OD_OS, .data[[prefix]])
+}
 
-```
-```{r}
+
+
 oc_lid_abn <- process_data(original_data_with_new_race, c("oc_lid_abn_od", "oc_lid_abn_os"), "Baseline", "oc_lid_abn")
 oc_conj_abn <- process_data(original_data_with_new_race, c("oc_conj_abn_od", "oc_conj_abn_os"), "Baseline", "oc_conj_abn")
 oc_cornea_abn <- process_data(original_data_with_new_race, c("oc_cornea_abn_od", "oc_cornea_abn_os"), "Baseline", "oc_cornea_abn")
@@ -3408,162 +3434,958 @@ oc_vitreous_abn <- process_data(original_data_with_new_race, c("oc_vitreous_abn_
 oc_head_ratio <- process_data(original_data_with_new_race, c("oc_head_ratio_od", "oc_head_ratio_os"), "Baseline", "oc_head_ratio")
 oc_periretina_abn <- process_data(original_data_with_new_race, c("oc_periretina_abn_od", "oc_periretina_abn_os"), "Baseline", "oc_periretina_abn")
 oc_macula_abn <- process_data(original_data_with_new_race, c("oc_macula_abn_od", "oc_macula_abn_os"), "Baseline", "oc_macula_abn")
+# add<- c(oc_cort_cataract_os,oc_nuc_cataract_os,oc_psc_cataract_os)
+oc_cort_cataract <- process_data(original_data_with_new_race,c("oc_cort_cataract_od", "oc_cort_cataract_os"), "Baseline", "oc_cort_cataract")
+oc_nuc_cataract <- process_data(original_data_with_new_race,c("oc_nuc_cataract_od", "oc_nuc_cataract_os"), "Baseline", "oc_nuc_cataract")
+oc_psc_cataract <- process_data(original_data_with_new_race,c("oc_psc_cataract_od", "oc_psc_cataract_os"), "Baseline", "oc_psc_cataract")
+
+
 
 mp_fixation_var<- original_data_with_new_race %>%
-select(patient_id,redcap_event_name.factor,redcap_data_access_group.factor,redcap_repeat_instrument, OD_OS=fxeye,fxfixloss,fxbcea63,fxbcea95,fxdistprl)%>% 
+select(patient_id,redcap_event_name.factor,redcap_repeat_instrument, OD_OS=fxeye,fxfixloss,fxbcea63,fxbcea95,fxdistprl)%>% 
 filter(redcap_event_name.factor == "Baseline" & redcap_repeat_instrument =="mp_fixation") %>% 
  mutate(OD_OS = as.character(OD_OS)) %>%
   mutate(OD_OS = case_when(
     OD_OS == "R" ~ "OD",
     OD_OS == "L" ~ "OS",
     TRUE ~ OD_OS
-  ))
+  )) %>% 
+  select(-redcap_repeat_instrument)
 
-eye_level_data_for_color_analysis <- Randomized1 %>%
-  left_join(Mean_Sensitivity1, by = c("patient_id")) %>%
-  left_join(EZ_width1, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
-  left_join(oc_lid_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
-  left_join(oc_conj_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+color_long1 <- color %>% 
+  pivot_longer(
+    cols = starts_with("mpv"),
+    names_to = "OD_OS",
+    values_to = "color"
+  )%>% 
+  mutate(OD_OS = case_when(
+    OD_OS == "mpv_dot_od.factor" ~ "OD",
+    OD_OS == "mpv_dot_os.factor" ~ "OS",
+    TRUE ~ OD_OS
+  )) %>% 
+  mutate(patient_id = as.character(patient_id))
+
+
+
+Randomized2 <- original_data_with_new_race %>%
+  dplyr::filter(patient_id %in% r$patient_id) %>% 
+  dplyr::select(patient_id, Age, Sex, Race, rd_eye.factor, redcap_data_access_group, redcap_event_name.factor) %>% 
+  na.omit() %>% 
+  mutate(Age = as.numeric(Age)) %>%
+  # Add OD_OS column with repeated values "OD" and "OS"
+  tidyr::expand_grid(OD_OS = c("OD", "OS")) %>%
+  arrange(patient_id)
+
+
+#NAC07 all age related variables 
+age<- original_data_with_new_race %>% 
+  select(patient_id,ph_diag_rp_age,ph_diff_tasks_dark_age,ph_narrower_view_age,ph_obj_popvw_age,ph_bump_trip_age) %>% 
+ mutate(age_of_symptoms = pmin(ph_diff_tasks_dark_age, ph_narrower_view_age, ph_obj_popvw_age, ph_bump_trip_age, na.rm = TRUE),
+        patient_id= as.character(patient_id)) %>% 
+  filter(!is.na(age_of_symptoms))
+   
+# patient 2102 do not have mean sensitivity value for baseline, use screening to replace the baseline value;
+patient_2102 <- Mean_Sensitivity %>%
+  select(patient_id, OD_OS, Mean_Sensitivity) %>%
+  filter(patient_id == "2102") %>%
+  mutate(patient_id = as.character(patient_id),
+         OD_OS = as.character(OD_OS))  
+
+eye_level_data_for_color_analysis <- Randomized2 %>%
+  left_join(Mean_Sensitivity1, by = c("patient_id","OD_OS","redcap_event_name.factor")) %>%
+  left_join(EZ_width1, by = c("patient_id", "OD_OS", "redcap_event_name.factor"))%>%
+  left_join(oc_lid_abn, by = c("patient_id","OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_conj_abn, by = c("patient_id","OD_OS", "redcap_event_name.factor")) %>%
   left_join(oc_cornea_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
   left_join(oc_ac_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
-  left_join(oc_iris_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_iris_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor"))%>%
   left_join(oc_pupil_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
   left_join(oc_lens_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
   left_join(oc_vitreous_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
   left_join(oc_head_ratio, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
   left_join(oc_periretina_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
   left_join(oc_macula_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_cort_cataract, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_nuc_cataract, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_psc_cataract, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
   left_join(mp_fixation_var, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
-  filter(!(rd_eye.factor == "OD only (right only)" & OD_OS == "OS")) %>%
-  filter(!(rd_eye.factor == "OS only (left only)" & OD_OS == "OD")) %>% 
-  select(-redcap_repeat_instrument)
+  mutate(patient_id = as.character(patient_id)) %>% 
+  left_join(color_long1, by = c("patient_id", "OD_OS","redcap_event_name.factor")) %>%
+  filter(!(rd_eye.factor == "OD only (right only)" & OD_OS == "OS")) %>%   # take out ineligible eyes 
+  filter(!(rd_eye.factor == "OS only (left only)" & OD_OS == "OD"))  %>% 
+   mutate(
+    numeric_fixation_losses = as.numeric(gsub("%", "", fxfixloss)),
+    numeric_fxbcea63 = as.numeric(gsub("%", "", fxbcea63)),
+    numeric_fxbcea95 = as.numeric(gsub("%", "", fxbcea95)),
+    numeric_fxdistprl = as.numeric(gsub("%", "", fxdistprl)),
+    outcome_color = as.factor(ifelse(color == "Green",0,1) ) 
+    ) %>% 
+  left_join(age, by="patient_id") %>% 
+  mutate(
+    age_of_symptoms_imputed = ifelse(age_of_symptoms =="NA" | is.na(age_of_symptoms),Age,age_of_symptoms),
+     ph_diag_rp_age_imputed = ifelse(ph_diag_rp_age =="NA" | is.na(ph_diag_rp_age),Age,ph_diag_rp_age),
+    duration_of_symptoms = Age - age_of_symptoms_imputed,
+    duration_of_diag = Age - ph_diag_rp_age_imputed) %>%
+  mutate(across(starts_with("oc"), as.factor)) %>% 
+  left_join(patient_2102,  by = c("patient_id", "OD_OS"))%>%
+  mutate(Mean_Sensitivity = coalesce(Mean_Sensitivity.x, Mean_Sensitivity.y)) %>%
+  select(-Mean_Sensitivity.x, -Mean_Sensitivity.y)
 
 
-eye_level_data_for_color_analysis %>% select(-patient_id,-redcap_event_name.factor,-rd_eye.factor) %>% 
-  tbl_summary()
  
+ 
+eye_level_data_for_color_analysis %>% select(-patient_id,-redcap_event_name.factor,-rd_eye.factor) %>% 
+  mutate(oc_head_ratio = as.numeric(as.character(oc_head_ratio))) %>%  # Convert oc_head_ratio to numeric
+  tbl_summary(
+    # digits = list(days_from_randomized_to_withdraw ~ 0) ,
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      )
+    ),
+    type = list(
+    c(starts_with("oc") & !contains("oc_head_ratio")) ~ "categorical", 
+    c(oc_head_ratio, starts_with("numeric")) ~ "continuous"
+    )
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary**") %>%
+  bold_labels() 
+ 
+
+
+Kurt<- eye_level_data_for_color_analysis %>% filter(fxfixloss =="") %>% pull(patient_id) %>% unique()
+ 
+
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# Assuming 'df' is your data frame
+# Select specific numeric columns: 'oc_head_ratio' and those starting with 'numeric'
+numeric_columns <- eye_level_data_for_color_analysis %>%
+  select(oc_head_ratio, starts_with("numeric"),outcome_color)
+
+# Plot histograms for each numeric column
+
+# numeric_columns %>%
+#   pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+#   ggplot(aes(x = value)) +
+#   geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+#   facet_wrap(~ variable, scales = "free") +
+#   theme_minimal() +
+#   labs(title = "Histograms of Selected Numeric Columns")
+
+
+# # Fit the GEE model
+# gee_model <- geeglm(outcome_color ~ predictor_var, data = data, id = patient_id, family = binomial, corstr = "exchangeable")
+# 
+# View the summary of the GEE model
+# summary(gee_model)
+# table(eye_level_data_for_color_analysis$outcome_color)
+
+# write.csv(eye_level_data_for_color_analysis,"eye_level_data_for_color_analysis.csv")
+
+```
+
+## Visualize the Distribution of 'outcome_color' Across Different Predictors: Create plots to explore how 'outcome_color' varies across different groups.
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+library(ggplot2)
+library(plotly)
+library(dplyr)
+# List of continous variables for plotting
+variables <- c("Age", "EZ_width", "Mean_Sensitivity", "oc_head_ratio", grep("^duration", names(eye_level_data_for_color_analysis), value = TRUE))
+
+# # Loop through each variable and create a boxplot
+# for (var in variables) {
+#   p <- ggplot(eye_level_data_for_color_analysis , aes_string(x = "outcome_color", y = var, fill = "outcome_color")) +
+#     geom_boxplot(outlier.colour = "red", outlier.size = 2) +
+#     scale_fill_brewer(palette = "Set1") +
+#     labs(title = paste("Boxplot of", var, "by outcome_color"),
+#          x = "Outcome Color",
+#          y = var) +
+#     theme_minimal() +
+#     theme(axis.text.x = element_text(angle = 45, hjust = 1),
+#           legend.position = "none")
+#   print(p)
+# }
+# 
+# 
+# # List of variables for plotting
+# variables1 <- c("Sex", "Race")
+# 
+# # Loop through each variable and create a bar plot
+# for (var in variables1) {
+#   p <- ggplot(eye_level_data_for_color_analysis , aes_string(x = var, fill = "outcome_color")) +
+#     geom_bar(position = "dodge") +
+#     scale_fill_brewer(palette = "Set1") +
+#     labs(title = paste("Bar Plot of", var, "by outcome_color"),
+#          x = var,
+#          y = "Count") +
+#     theme_minimal() +
+#     theme(axis.text.x = element_text(angle = 45, hjust = 1))
+#   # Print the plot
+#   print(p)
+# }
+
+
+# numerical_data <- eye_level_data_for_color_analysis %>%
+#   select(starts_with("numeric"),outcome_color) %>% 
+#   select(!ends_with("prl"))
+
+
+eye_level_data_clean <- eye_level_data_for_color_analysis %>%
+  select(!ends_with("cataract")) %>% 
+  filter(!is.na(outcome_color) ) %>% 
+    mutate( Race = case_when(Race %in% c("Asian","Native Hawaiian or Other Pacific Islander","Asian; White") ~ "Asian" ,
+                      Race %in% c("Black or African American; White","Black or African American") ~ "Black or African American",
+                      Race %in% c("Hispanic or Latino; White","Hispanic or Latino") ~ "Hispanic or Latino",
+                        Race %in% c("White","White; Other") ~ "White",
+                      TRUE ~ Race))
+
+# check patient_id for those green but fixation losses is not 0
+eye_level_data_clean1<-eye_level_data_clean %>% 
+  select(patient_id,color,numeric_fixation_losses) %>% 
+  mutate(Check = ifelse(color == "Green" & numeric_fixation_losses != 0, "flag", "ok")) %>% 
+  filter(Check == "flag")
+
+eye_level_data_clean2<-eye_level_data_clean %>% 
+  select(patient_id,color,numeric_fixation_losses) %>% 
+  mutate(Check = ifelse(color != "Green" & numeric_fixation_losses == 0, "flag", "ok")) %>% 
+  filter(Check == "flag") %>% rbind(eye_level_data_clean1)
+
+
+# # Plot the distribution as a stacked bar chart
+# ggplot(eye_level_data_clean %>%
+#   group_by(outcome_color, numeric_fixation_losses) %>%
+#   summarise(n = n()) %>%  # Count the number of occurrences for each combination
+#   mutate(percentage = n / sum(n)) %>%  # Calculate percentage within each group
+#   ungroup(), aes(x = factor(numeric_fixation_losses), y = percentage, fill = factor(outcome_color))) +
+#   geom_bar(stat = "identity", position = "stack", alpha = 0.8) +  # Stacked bar plot
+#   geom_text(aes(label = scales::percent(percentage, accuracy = 1)), 
+#             position = position_stack(vjust = 0.5), size = 3, color = "white") +  # Add percentage labels
+#   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +  # Format y-axis as percentage
+#   labs(
+#     title = "Distribution of Numeric Fixation Losses by Outcome Color",
+#     x = "Numeric Fixation Losses",
+#     y = "Percentage",
+#     fill = "Outcome Color"
+#   ) +
+#   theme_minimal() +
+#   theme(
+#     plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+#     axis.text.x = element_text(angle = 45, hjust = 1)
+#   )
+# 
+# 
+# 
+# # Plot the distribution as a stacked bar chart
+# ggplot(eye_level_data_clean %>%
+#   group_by(outcome_color, numeric_fxbcea63) %>%
+#   summarise(n = n()) %>%  # Count the number of occurrences for each combination
+#   mutate(percentage = n / sum(n)) %>%  # Calculate percentage within each group
+#   ungroup(), aes(x = factor(numeric_fxbcea63), y = percentage, fill = factor(outcome_color))) +
+#   geom_bar(stat = "identity", position = "stack", alpha = 0.8) +  # Stacked bar plot
+#   geom_text(aes(label = scales::percent(percentage, accuracy = 1)), 
+#             position = position_stack(vjust = 0.5), size = 3, color = "white") +  # Add percentage labels
+#   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +  # Format y-axis as percentage
+#   labs(
+#     title = "Distribution of numeric_fxbcea63 by Outcome Color",
+#     x = "numeric_fxbcea63",
+#     y = "Percentage",
+#     fill = "Outcome Color"
+#   ) +
+#   theme_minimal() +
+#   theme(
+#     plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+#     axis.text.x = element_text(angle = 45, hjust = 1)
+#   )
+# 
+# 
+# 
+# # Plot the distribution as a stacked bar chart
+# ggplot(eye_level_data_clean %>%
+#   group_by(outcome_color, numeric_fxbcea95) %>%
+#   summarise(n = n()) %>%  # Count the number of occurrences for each combination
+#   mutate(percentage = n / sum(n)) %>%  # Calculate percentage within each group
+#   ungroup(), aes(x = factor(numeric_fxbcea95), y = percentage, fill = factor(outcome_color))) +
+#   geom_bar(stat = "identity", position = "stack", alpha = 0.8) +  # Stacked bar plot
+#   geom_text(aes(label = scales::percent(percentage, accuracy = 1)), 
+#             position = position_stack(vjust = 0.5), size = 3, color = "white") +  # Add percentage labels
+#   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +  # Format y-axis as percentage
+#   labs(
+#     title = "Distribution of numeric_fxbcea95 by Outcome Color",
+#     x = "numeric_fxbcea63",
+#     y = "Percentage",
+#     fill = "Outcome Color"
+#   ) +
+#   theme_minimal() +
+#   theme(
+#     plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+#     axis.text.x = element_text(angle = 45, hjust = 1)
+#   )
+
+
+################################################################################################################
+# Create a list of variable names and titles
+plot_info <- list(
+  list(var = "Race", title = "Distribution of Race by Outcome Color"),
+  list(var = "Sex", title = "Distribution of Sex by Outcome Color")
+)
+custom_colors <- c("0" = "#1f77b4", "1" = "#ff7f0e") 
+# Initialize an empty list to store the plots
+plots <- list()
+# Loop through the plot information to create plots
+for (info in plot_info) {
+  # Summarize data
+  data <- eye_level_data_clean %>%
+    group_by(!!sym(info$var), outcome_color) %>%
+    summarise(n = n()) %>%
+    mutate(percentage = n / sum(n))
+  
+  # Ensure outcome_color is a factor
+  data$outcome_color <- factor(data$outcome_color)
+  
+  # Create the plot and store it in the list
+  p <- ggplot(data, aes_string(x = info$var, y = "percentage", fill = "outcome_color")) +  # Fill based on outcome_color directly
+    geom_bar(stat = "identity", position = "stack", alpha = 0.8) +
+    
+    # Add both percentages and counts in the middle of the bars
+    geom_text(aes(label = paste0(scales::percent(percentage, accuracy = 1), "\n(N=", n, ")")), 
+              position = position_stack(vjust = 0.5), size = 3, color = "white") +
+    
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    scale_fill_manual(values = custom_colors) +  # Apply custom colors
+    labs(
+      title = info$title,
+      x = info$var,
+      y = "Percentage",
+      fill = "Outcome Color"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+  
+  # Store the plot in the list
+  plots[[info$title]] <- p
+}
+
+# Print all plots
+for (plot_name in names(plots)) {
+  print(plots[[plot_name]])
+}
+
+
+
+
+# eye_level_data_clean$fxbcea63<- as.numeric(eye_level_data_clean$fxbcea63)
+# eye_level_data_clean$fxbcea95<- as.numeric(eye_level_data_clean$fxbcea95)
+
+
+# hist(eye_level_data_clean$fxbcea63)
+# hist(eye_level_data_clean$fxbcea95)
+# 
+# eye_level_data_clean%>%
+#   group_by(Race,outcome_color) %>%
+#   summarise(n = n()) %>%  # Count the number of occurrences for each combination
+#   mutate(percentage = n / sum(n),
+#          denom = sum(n)) %>%  # Calculate percentage within each group
+#   ungroup()
+# 
+# eye_level_data_clean%>%
+#   group_by(Sex,outcome_color) %>%
+#   summarise(n = n()) %>%  # Count the number of occurrences for each combination
+#   mutate(percentage = n / sum(n),
+#          denom = sum(n)) %>%  # Calculate percentage within each group
+#   ungroup()
+# 
+# 
+# eye_level_data_clean %>%
+#   group_by(numeric_fixation_losses,outcome_color) %>%
+#   summarise(n = n()) %>%  # Count the number of occurrences for each combination
+#   mutate(percentage = n / sum(n),
+#          denom = sum(n)) %>%  # Calculate percentage within each group
+#   ungroup()
+
+
+```
+
+## Fit GEE with Logistic Regression Models: After visualizing the data, fit logistic regression models to analyze the relationship between outcome_color and each predictor.
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+
+#########################################################################
+#Model data
+###########################################################################
+
+# Remove rows with NA in outcome_color
+eye_level_data_clean <- eye_level_data_for_color_analysis %>%
+  select(!ends_with("cataract")) %>% 
+  filter(!is.na(outcome_color) ) %>% 
+  mutate( Race = case_when(Race %in% c("Asian","Native Hawaiian or Other Pacific Islander","Asian; White") ~ "Asian" ,
+                      Race %in% c("Black or African American; White","Black or African American") ~ "Black or African American",
+                      Race %in% c("Hispanic or Latino; White","Hispanic or Latino") ~ "Hispanic or Latino",
+                      TRUE ~ Race),
+          outcome_color = as.numeric(outcome_color),
+          outcome_color = case_when(outcome_color == 1 ~ 0,
+                                    TRUE ~ 1)) 
+
+
+ 
+# Exclude variables that are not suitable for logistic regression (e.g., single-level factors or columns with NA)
+predictor_vars <- setdiff(names(eye_level_data_clean), c("outcome_color", "patient_id","rd_eye.factor","fxbcea95","fxbcea63","fxfixloss","redcap_data_access_group","color","OD_OS",
+"oc_periretina_abn","oc_ac_abn","redcap_event_name.factor"))
+# 
+# # Ensure outcome_color is a factor
+# eye_level_data_clean$outcome_color <- as.factor(eye_level_data_clean$outcome_color)
+# # Initialize an empty list to store results
+# results_list <- list()
+# # Fit models and store summaries
+# for (var in predictor_vars) {
+#   # Check if the variable is categorical and convert it if necessary
+#   if (is.character(eye_level_data_clean[[var]]) || is.factor(eye_level_data_clean[[var]])) {
+#     eye_level_data_clean[[var]] <- as.factor(eye_level_data_clean[[var]])
+#   }
+#   # Create formula for logistic regression
+#   formula <- as.formula(paste("outcome_color ~", var))
+#   # Fit the logistic regression model
+#   model <- glm(formula, data = eye_level_data_clean, family = binomial)
+#   # Compute confidence intervals
+#   ci <- confint.default(model)
+#   # Summarize the model
+#   summary_model <- summary(model)
+#   # Extract coefficients and p-values
+#   coefficients <- summary_model$coefficients[, "Estimate"]
+#   p_values <- summary_model$coefficients[, "Pr(>|z|)"]
+#   
+#   # Create results data frame for each variable
+#   results <- data.frame(
+#     Variable = var,
+#     Estimate = round(coefficients, 4),
+#     Std_Error = round(summary_model$coefficients[, "Std. Error"], 4),
+#     z_Value = round(summary_model$coefficients[, "z value"], 4),
+#     P_Value = round(p_values, 4),
+#     Odds_Ratio = round(exp(coefficients), 4),
+#     OR_Lower_CI = round(exp(ci[, 1]), 4),
+#     OR_Upper_CI = round(exp(ci[, 2]), 4),
+#     Significance = ifelse(round(p_values, 4) <= 0.05, "***", "")
+#   )
+#   # Add results to the list
+#   results_list[[var]] <- results
+# }
+# 
+# # Combine all results into a single data frame
+# final_results_df <- bind_rows(results_list)
+# # Define the file path for saving the results
+# output_file_csv <- "logistic_regression_results_with_ci.csv"
+# # Save the results data frame to a CSV file
+# write.csv(final_results_df, file = output_file_csv, row.names = TRUE)
+
+#################################################################################
+# GEE 
+#################################################################################
+
+
+
+library(gee)
+library(dplyr)
+library(openxlsx)
+library(geepack)
+
+# Initialize a workbook
+wb <- createWorkbook()
+
+# Fit models and store summaries
+for (var in predictor_vars) {
+ eye_level_data_clean <- eye_level_data_clean[!is.na(eye_level_data_clean[[var]]), ]
+  # Create formula for GEE logistic regression
+  formula <- as.formula(paste("outcome_color ~", var))
+  # Try fitting the GEE model
+  tryCatch({
+    # Fit the GEE model using the filtered data
+    model <- geeglm(formula, data = eye_level_data_clean, id = patient_id, family = binomial, corstr = "exchangeable")
+    # Summarize the model
+    summary_model <- summary(model)
+    # Capture the printed output
+    model_summary_output <- capture.output(print(summary_model))
+    # Convert the captured output to a data frame for writing to Excel
+    model_summary_df <- data.frame(Output = model_summary_output, stringsAsFactors = FALSE)
+    
+    # Add model summary output to the workbook in a new sheet
+    addWorksheet(wb, sheetName = var)
+    writeData(wb, sheet = var, model_summary_df)
+    
+  }, error = function(e) {
+    # Handle the error and output a message (optional)
+    message(paste("Model fitting failed for variable:", var, "with error:", e$message))
+    
+    # Create a placeholder for the summary in case of failure
+    error_df <- data.frame(Error = e$message)
+    
+    # Add the error message to the workbook in a new sheet
+    addWorksheet(wb, sheetName = paste(var, "Error"))
+    writeData(wb, sheet = paste(var, "Error"), error_df)
+  })
+}
+
+# Define the file path for saving the results
+# output_file_excel <- paste0("gee_logistic_regression_results",today(),".xlsx")
+
+# Save the workbook
+# saveWorkbook(wb, file = output_file_excel, overwrite = TRUE)
+
+
+```
+
+## plasma_data_for_analysis
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(ggthemes)
+library(hms)
+
+# Convert variables to appropriate formats if necessary
+plasma_data_clean <- plasma_data_for_analysis %>%
+  mutate(
+    Sex = as.factor(Sex),
+    Race = as.factor(Race),
+    b1_visitdt = as.Date(b1_visitdt, format = "%Y-%m-%d"),
+    b1_drawn_tm = parse_hm(b1_drawn_tm),
+    Race = case_when(Race %in% c("Asian","Native Hawaiian or Other Pacific Islander") ~ "Asian" ,
+                      Race %in% c("Black or African American; White","Black or African American") ~ "Black or African American",
+                      Race %in% c("Hispanic or Latino; White","Hispanic or Latino") ~ "Hispanic or Latino",
+                      TRUE ~ Race) )
+
+
+plasma_data_clean %>%  select(-patient_id) %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      )
+    ),
+    type = list(
+     c(b1_drawn_tm,starts_with("b1_visitdt") ) ~ "categorical", 
+    c(Age, starts_with("plgr")) ~ "continuous"
+    )
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary Table Plasma**") %>%
+  bold_labels() 
+ 
+
+# Scatter Plot for Age vs. PLGR Concentration
+plasma_data_clean$Age <- as.numeric(plasma_data_clean$Age)
+
+# Scatter Plot for Age vs. PLGR Concentration
+ggplot(plasma_data_clean, aes(x = Age, y = plgr_concentration)) +
+  geom_point( size = 3, alpha = 0.6) +  # Add color and size to points
+  geom_smooth(method = "lm", formula = y ~ x, color = "darkblue", linetype = "dashed", se = FALSE, size = 1.2) +  # Customize regression line
+  scale_color_viridis_c() +  # Use a viridis color scale
+  labs(title = "PLGR Concentration by Age", x = "Age", y = "PLGR Concentration", color = "Age") +
+  theme_minimal(base_size = 15) +  # Adjust base text size
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) 
+
+
+# Scatter Plot for Age vs. PLGR Concentration
+ggplot(plasma_data_clean, aes(x = b1_drawn_tm, y = plgr_concentration)) +
+  geom_point( size = 3, alpha = 0.6) +  # Add color and size to points
+  #geom_smooth(method = "lm", formula = y ~ x, color = "darkblue", linetype = "dashed", se = FALSE, size = 1.2) +  # Customize regression line
+  scale_color_viridis_c() +  # Use a viridis color scale
+  labs(title = "PLGR Concentration by blood_drawn_time", x = "blood_drawn_time", y = "PLGR Concentration", color = "blood_drawn_time") +
+  theme_minimal(base_size = 15) +  # Adjust base text size
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) 
+
+
+# Boxplot for Sex vs. PLGR Concentration
+ggplot(plasma_data_clean, aes(x = Sex, y = plgr_concentration, fill = Sex)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2, outlier.shape = 21) +  # Add transparency to boxplot
+  # geom_jitter(aes(color = Sex), width = 0.2, size = 2, alpha = 0.5) +  # Add jittered points
+  # scale_fill_manual(values = c("Male" = "#1f77b4", "Female" = "#ff7f0e")) +  # Custom colors for Sex
+  # scale_color_manual(values = c("Male" = "#1f77b4", "Female" = "#ff7f0e")) +  # Same colors for jitter
+  labs(title = "PLGR Concentration by Sex", x = "Sex", y = "PLGR Concentration", fill = "Sex") +
+  theme_minimal(base_size = 15) +
+  theme(legend.position = "none", plot.title = element_text(hjust = 0.5, face = "bold"))+
+  scale_fill_brewer(palette = "Set1") 
+
+# Boxplot for Race vs. PLGR Concentration
+ggplot(plasma_data_clean, aes(x = Race, y = plgr_concentration, fill = Race)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 2, outlier.shape = 21) +  # Add transparency to boxplot
+  scale_fill_brewer(palette = "Set1") +  # Use color palette for Race
+  labs(title = "PLGR Concentration by Race", x = "Race", y = "PLGR Concentration", fill = "Race") +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.4, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Tilt x-axis labels at 45 degrees
+  ) 
+ 
+ 
+# Linear regression model: outcome (plgr_concentration)
+results_list <- list()
+predictor_vars <- c("Age", "Sex", "Race", "redcap_data_access_group","b1_drawn_tm")
+
+for (var in predictor_vars) {
+  # Fit the linear regression model
+  formula <- as.formula(paste("plgr_concentration ~", var))
+  model <- lm(formula, data = plasma_data_clean)
+  # Summarize the model
+  summary_fit <- summary(model)
+  # Extract coefficients, p-values, and confidence intervals
+  coefficients <- summary_fit$coefficients[, 1]
+  p_values <- summary_fit$coefficients[, "Pr(>|t|)"]
+  ci <- confint(model)
+  # Create results data frame
+  results <- data.frame(
+    Variable = var,
+    Estimate = coefficients,
+    P_Value = p_values,
+    Lower_CI = round(ci[, 1], 4),
+    Upper_CI = round(ci[, 2], 4),
+    Sig = ifelse(p_values <= 0.05, "***", "")
+  )
+  # Store results
+  results_list[[var]] <- results
+}
+
+# Combine all results into one data frame
+final_results <- bind_rows(results_list)
+# Save the results to a CSV file
+write.csv(final_results, "linear_regression_results.csv", row.names = TRUE)
+
+
+
+model <- lm(plgr_concentration ~ Sex, data = plasma_data_clean)
+model_result<-summary(model)
+
+
+```
+
+## VITREOUS_analysis (Sample: randomized patients including ineligible eyes)  
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+# List of pairs for the function
+column_pairs <- list(
+  c("oc_vitreous_abn_od", "oc_vitreous_abn_os"),
+  c("oc_vit_opacity_od", "oc_vit_opacity_os"),
+  c("oc_weiss_ring_od", "oc_weiss_ring_os"),
+  c("oc_vit_hemorrhage_od", "oc_vit_hemorrhage_os"),
+  c("oc_vit_cells_od", "oc_vit_cells_os"),
+  c("oc_vit_haze_od", "oc_vit_haze_os"),
+  c("oc_vitreousoth_od", "oc_vitreousoth_os"),
+  c("oc_psc_cataract_od","oc_psc_cataract_os"))
+
+
+# List of new variable names
+new_variable_names <- c(
+  "oc_vitreous_abn",
+  "oc_vit_opacity",
+  "oc_weiss_ring",
+  "oc_vit_hemorrhage",
+  "oc_vit_cells",
+  "oc_vit_haze",
+  "oc_vitreousoth",
+  "oc_psc_cataract")
+
+# Loop through pairs and process data
+for (i in seq_along(column_pairs)) {
+  # Call the process_data function for each pair
+  assign(new_variable_names[i], 
+         process_data(original_data_with_new_race, column_pairs[[i]], "Baseline", new_variable_names[i]))
+}
+
+VITREOUS <-Randomized2 %>%
+  left_join(oc_vitreous_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_vit_opacity, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_weiss_ring, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_vit_hemorrhage, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_vit_cells, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_vit_haze, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_vitreousoth, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>% 
+  left_join(oc_psc_cataract, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>% 
+   mutate( Race = case_when(Race %in% c("Asian","Native Hawaiian or Other Pacific Islander","Asian; White") ~ "Asian" ,
+                      Race %in% c("Black or African American; White","Black or African American") ~ "Black or African American",
+                      Race %in% c("Hispanic or Latino; White","Hispanic or Latino") ~ "Hispanic or Latino",
+                        Race %in% c("White","White; Other") ~ "White",
+                      TRUE ~ Race)) %>% 
+  mutate(count_classify  = rowSums(across(c(oc_vit_opacity, 
+                                       oc_weiss_ring, 
+                                       oc_vit_hemorrhage, 
+                                       oc_vit_cells, 
+                                       oc_vit_haze, 
+                                       oc_vitreousoth), ~ . != 0)),
+         patient_id = as.character(patient_id))
+
+# %>% 
+#   filter(!(rd_eye.factor == "OD only (right only)" & OD_OS == "OS")) %>% 
+#   filter(!(rd_eye.factor == "OS only (left only)" & OD_OS == "OD")) 
+ 
+
+
+VITREOUS %>% select(-redcap_event_name.factor,-patient_id, -redcap_data_access_group) %>% 
+  tbl_summary(
+    # digits = list(days_from_randomized_to_withdraw ~ 0) ,
+    statistic = list(
+      all_continuous() ~ paste(
+        "{mean} ({sd});",
+        "{min}~{max};",
+        "{median} [{p25} - {p75}]"
+      )
+    ),
+    type = list(
+    c(starts_with("oc") & !contains("oc_head_ratio")) ~ "categorical", 
+    c(Age) ~ "continuous"
+    )
+  ) %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_caption("**Summary of Baseline Vitreous for Randomized Patients**") %>%
+  bold_labels() 
+ 
+create_tbl_cross(VITREOUS, oc_vitreous_abn, oc_psc_cataract, "tbl_cross_table")
+# tbl_cross_table
+
+
+VITREOUS1 <- VITREOUS %>% select(-Age,-Sex,-rd_eye.factor,-redcap_data_access_group,-redcap_event_name.factor)
+VITREOUS_analysis <- Randomized2 %>%
+  select(-Race) %>% 
+  left_join(Mean_Sensitivity1, by = c("patient_id","OD_OS","redcap_event_name.factor")) %>%
+  left_join(EZ_width1, by = c("patient_id", "OD_OS", "redcap_event_name.factor"))%>%
+  left_join(oc_lid_abn, by = c("patient_id","OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_conj_abn, by = c("patient_id","OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_cornea_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_ac_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_iris_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor"))%>%
+  left_join(oc_pupil_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_lens_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  # left_join(oc_vitreous_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_head_ratio, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_periretina_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_macula_abn, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_cort_cataract, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(oc_nuc_cataract, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  # left_join(oc_psc_cataract, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  left_join(mp_fixation_var, by = c("patient_id", "OD_OS", "redcap_event_name.factor")) %>%
+  mutate(patient_id = as.character(patient_id)) %>% 
+  left_join(color_long1, by = c("patient_id", "OD_OS","redcap_event_name.factor")) %>%
+  # filter(!(rd_eye.factor == "OD only (right only)" & OD_OS == "OS")) %>%   # take out ineligible eyes 
+  # filter(!(rd_eye.factor == "OS only (left only)" & OD_OS == "OD"))  %>% 
+   mutate(
+    numeric_fixation_losses = as.numeric(gsub("%", "", fxfixloss)),
+    numeric_fxbcea63 = as.numeric(gsub("%", "", fxbcea63)),
+    numeric_fxbcea95 = as.numeric(gsub("%", "", fxbcea95)),
+    numeric_fxdistprl = as.numeric(gsub("%", "", fxdistprl)),
+    outcome_color = as.factor(ifelse(color == "Green",0,1) ) 
+    ) %>% 
+  left_join(age, by="patient_id") %>% 
+  mutate(
+    age_of_symptoms_imputed = ifelse(age_of_symptoms =="NA" | is.na(age_of_symptoms),Age,age_of_symptoms),
+     ph_diag_rp_age_imputed = ifelse(ph_diag_rp_age =="NA" | is.na(ph_diag_rp_age),Age,ph_diag_rp_age),
+    duration_of_symptoms = Age - age_of_symptoms_imputed,
+    duration_of_diag = Age - ph_diag_rp_age_imputed) %>%
+  mutate(across(starts_with("oc"), as.factor)) %>% 
+  left_join(patient_2102,  by = c("patient_id", "OD_OS"))%>%
+  mutate(Mean_Sensitivity = coalesce(Mean_Sensitivity.x, Mean_Sensitivity.y)) %>%
+  select(-Mean_Sensitivity.x, -Mean_Sensitivity.y) %>% 
+  full_join(VITREOUS1,by = c("patient_id", "OD_OS"))
+
+
+ 
+
+# List of variables for plotting
+variables1 <- c("Sex", "Race", "color")
+
+# List of outcomes to include in the plot
+outcomes <- c("oc_vitreous_abn", "oc_weiss_ring", "oc_vit_opacity")
+
+# Loop through each variable and each outcome, and create a bar plot
+for (var in variables1) {
+  for (outcome in outcomes) {
+    data <- VITREOUS_analysis %>%
+      group_by(!!sym(var), !!sym(outcome)) %>%
+      summarise(n = n()) %>%
+      mutate(percentage = n / sum(n))
+    # Ensure the outcome variable is a factor
+    data[[outcome]] <- factor(data[[outcome]])
+    # Create the plot
+    p <- ggplot(data, aes_string(x = var, y = "percentage", fill = outcome)) +
+      geom_bar(stat = "identity", position = "stack", alpha = 0.8) +
+      geom_text(aes(label = paste0(scales::percent(percentage, accuracy = 1), "\n(N=", n, ")")), 
+                position = position_stack(vjust = 0.5), size = 3, color = "white") +
+      scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+      scale_fill_manual(values = custom_colors) +  # Apply custom colors
+      labs(
+        title = paste("Distribution of", var, "by outcome", outcome),
+        x = var,
+        y = "Percentage",
+        fill = outcome
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1)
+      )
+    # Print the plot
+    print(p)
+  }
+}
+
+
+
+# List of outcomes to include in the plot (to be used as x-axis)
+outcomes <- c("oc_vitreous_abn", "oc_weiss_ring", "oc_vit_opacity")
+# Identify numeric variables for y-axis
+numeric_vars <- VITREOUS_analysis %>%
+  select_if(is.numeric) %>%
+  select(-one_of(outcomes)) %>%
+  names()
+
+# Loop through each outcome and numeric variable to create boxplots
+for (outcome in outcomes) {
+  for (num_var in numeric_vars) {
+    # Create a boxplot for each numeric variable against the outcome, treating outcome as a factor
+    p <- ggplot(VITREOUS_analysis, aes_string(x = paste0("factor(", outcome, ")"), y = num_var, fill = outcome)) +
+      geom_boxplot(alpha = 0.7, outlier.size = 2, outlier.shape = 21) +  # Add transparency and customize outliers
+      labs(
+        title = paste(num_var, "by", outcome),
+        x = outcome,
+        y = num_var,
+        fill = outcome
+      ) +
+      theme_minimal(base_size = 10) +  # Use minimal theme with a base font size of 12
+      theme(
+        legend.position = "right",
+        plot.title = element_text(hjust = 0.4, face = "bold"),  # Center align the title slightly
+        axis.text.x = element_text(angle = 45, hjust = 1)  # Tilt x-axis labels at 45 degrees
+      )
+    # Print the plot
+    print(p)
+  }
+}
+
+### 
+# A<-original_data_with_new_race %>% select(patient_id,oc_vitreoussp_od,oc_vitreoussp_os) %>% na.omit() %>% 
+#   filter(oc_vitreoussp_od != "")
+# write.csv(A,"oc_vitreoussp.csv")
+
+```
+
+## GEE model for vitreous("oc_vitreous_abn", "oc_weiss_ring", "oc_vit_opacity")
+
+```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
+predictor_vars <- setdiff(names(VITREOUS_analysis), c("oc_vitreous_abn", "oc_weiss_ring", "oc_vit_opacity", "patient_id","rd_eye.factor","fxbcea95","fxbcea63","fxfixloss","redcap_data_access_group","OD_OS","redcap_event_name.factor"))
+
+
+library(openxlsx)  # Ensure you have the openxlsx package
+library(geepack)  # Ensure you have the geepack package
+
+# List of outcomes to loop through
+outcomes <- c("oc_vitreous_abn", "oc_weiss_ring", "oc_vit_opacity")
+
+# Function to create a unique sheet name
+create_unique_sheet_name <- function(workbook, base_name) {
+  new_name <- base_name
+  counter <- 1
+  
+  # Check if the sheet name already exists, and if so, append a counter
+  while (new_name %in% names(workbook)) {
+    new_name <- paste0(base_name, "_", counter)
+    counter <- counter + 1
+  }
+  
+  return(new_name)
+}
+
+# Loop through each outcome and create a separate workbook for each
+for (outcome in outcomes) {
+  # Initialize a new workbook for the current outcome
+  wb <- createWorkbook()
+  
+  # Loop through each predictor variable
+  for (var in predictor_vars) {
+    # Check if the predictor variable exists in the data frame
+    if (!var %in% names(VITREOUS_analysis)) {
+      message(paste("Predictor variable", var, "does not exist in the data frame. Skipping."))
+      next
+    }
+
+    # Filter the data to remove NAs for the specific outcome and predictor
+    eye_level_data_clean <- VITREOUS_analysis[!is.na(VITREOUS_analysis[[outcome]]) & !is.na(VITREOUS_analysis[[var]]), ]
+
+    # Check if the filtered data is not empty
+    if (nrow(eye_level_data_clean) == 0) {
+      message(paste("No complete cases for outcome:", outcome, "and predictor:", var, "- skipping this combination."))
+      next  # Skip to the next iteration
+    }
+
+    # Check if the predictor variable has at least 2 unique levels
+    if (length(unique(eye_level_data_clean[[var]])) < 2) {
+      message(paste("Skipping model fitting for outcome:", outcome, "and predictor:", var, "- not enough levels."))
+      next  # Skip to the next iteration
+    }
+
+    # Create formula for GEE logistic regression
+    formula <- as.formula(paste(outcome, "~", var))
+
+    # Try fitting the GEE model
+    tryCatch({
+      # Fit the GEE model using the filtered data
+      model <- geeglm(formula, data = eye_level_data_clean, id = patient_id, family = binomial, corstr = "exchangeable")
+      
+      # Summarize the model
+      summary_model <- summary(model)
+
+      # Capture the printed output
+      model_summary_output <- capture.output(print(summary_model))
+      
+      # Convert the captured output to a data frame for writing to Excel
+      model_summary_df <- data.frame(Output = model_summary_output, stringsAsFactors = FALSE)
+      
+      # Use the variable name as the sheet name
+      unique_sheet_name <- create_unique_sheet_name(wb, var)  # Get a unique sheet name
+      
+      # Add model summary output to the workbook in a new sheet
+      addWorksheet(wb, sheetName = unique_sheet_name)
+      writeData(wb, sheet = unique_sheet_name, model_summary_df)
+      
+    }, error = function(e) {
+      # Handle the error and output a message (optional)
+      message(paste("Model fitting failed for outcome:", outcome, "and predictor:", var, "with error:", e$message))
+      
+      # Create a placeholder for the summary in case of failure
+      error_df <- data.frame(Error = e$message)
+      
+      # Use the variable name as the error sheet name
+      unique_error_sheet_name <- create_unique_sheet_name(wb, paste(var, "Error", sep = "_"))  # Get a unique error sheet name
+      
+      # Add the error message to the workbook in a new sheet
+      addWorksheet(wb, sheetName = unique_error_sheet_name)
+      writeData(wb, sheet = unique_error_sheet_name, error_df)
+    })
+  }
+
+  # Define the file path for saving the results, named after the outcome
+  output_file_excel <- paste0(outcome, "_gee_logistic_regression_results_", Sys.Date(), ".xlsx")
+
+  # Save the workbook for the current outcome
+  saveWorkbook(wb, file = output_file_excel, overwrite = TRUE)
+}
+
 ```
 
 
 ## Patient ID Review with Team
 
 ```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
-#  
-# patient_id_discussed <- c("1805","2202","2910","2911","1301", "1604","1203", "1604","1402","3215","1306","2004" ,"2714", "2801", "2915", "2917", "2920", "2921", "2923","1217", "1801", "2701",  "2702", "2704", "2705", "2706", "2707","1306", "2714", "2801", "2915", "2917", "2920", "2923", "3105", "1301", "1604", "", "1604", "3401", "", "1217", "1801", "2701", "2702", "2704", "2705", "2706", "2707")
-# 
-# patient_id_discussed <- unique(patient_id_discussed)
-# ###### this is the list of the patient_id_discussed;
-# ################################################################################################################
-# cat("Patient ID for Daisy to take notes:",
-#   PV1 %>%
-#     mutate(Notes = ifelse(patient_id %in% patient_id_discussed, 'Discussed', 'New Case')) %>%
-#     filter(Category == "Scheduled but not completed, outside window") %>%
-#     pull(patient_id) %>%
-#     paste0('"', ., '"', collapse = ', '),
-# 
-#   PV1 %>%
-#     mutate(Notes = ifelse(patient_id %in% patient_id_discussed, 'Discussed', 'New Case')) %>%
-#     filter(ad_study_meds == 0) %>%
-#     pull(patient_id) %>%
-#     paste0('"', ., '"', collapse = ', '),
-# 
-#   window %>%
-#     mutate(Notes = ifelse(patient_id %in% patient_id_discussed, 'Discussed', 'New Case')) %>%
-#     filter(randomized_window == "***Alert: Passed BSL window & NOT randomized") %>%
-#     pull(patient_id) %>%
-#     paste0('"', ., '"', collapse = ', '),
-# 
-#   CV1 %>%
-#     mutate(Notes = ifelse(patient_id %in% patient_id_discussed, 'Discussed', 'New Case')) %>%
-#     filter(Category == "Scheduled but not completed, outside window") %>%
-#     pull(patient_id) %>%
-#     paste0('"', ., '"', collapse = ', '),
-# 
-#   CV1 %>%
-#     filter(ad_study_meds == 0) %>%
-#     pull(patient_id) %>%
-#     paste0('"', ., '"', collapse = ', '),
-# 
-#   CV1 %>%
-#     mutate(Notes = ifelse(patient_id %in% patient_id_discussed, 'Discussed', 'New Case')) %>%
-#     filter(Category == "Completed Within Visit Schedule Window" & is.na(drug_used)) %>%
-#     pull(patient_id) %>%
-#     paste0('"', ., '"', collapse = ', '),
-# 
-#   sep = ", "
-# )
-# 
-# cat("\n\n")
-# #########################################################################################
-# 
-# # Print alert for patients who passed BSL window and were not randomized
-# cat("*** Alert: Passed BSL window & NOT randomized ***\n")
-# alert_ids <- window %>% 
-#   mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case')) %>% 
-#   filter(randomized_window == "***Alert: Passed BSL window & NOT randomized" ) %>% 
-#   mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
-#   filter(Notes=="New Case") %>% 
-#   pull(Notes) %>% unique()%>% kable()
-# 
-# alert_ids
-# cat("\n")
-# 
-# # Print phone call visit 1 issues
-# cat("Phone call Visit 1: Scheduled but not completed, outside window\n")
-# scheduled_not_completed_ids <- PV1 %>% 
-#   mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case')) %>% 
-#   filter(Category == "Scheduled but not completed, outside window" ) %>% 
-#   mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
-#   filter(Notes=="New Case") %>% 
-#   pull(Notes) %>% unique()%>% kable()
-# 
-# 
-# print(scheduled_not_completed_ids%>% kable())
-# cat("\n")
-# 
-# 
-# cat("Phone call Visit 1: Patient IDs of Patients Who Did Not Take Medication\n")
-# not_taking_meds_ids_phone <- PV1 %>% 
-#   mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case')) %>% 
-#   filter(ad_study_meds == 0 ) %>% 
-#   mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
-#   filter(Notes=="New Case") %>% 
-#   pull(Notes) %>% unique()
-# print(not_taking_meds_ids_phone %>% kable())
-# cat("\n")
-# 
-# # Print in-clinic follow-up visit 1 issues
-# cat("In-clinic Follow-up Visit 1: Scheduled but not completed, outside window\n")
-# scheduled_not_completed_clinic_ids <- CV1 %>% 
-#    mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case')) %>% 
-#   filter(Category == "Scheduled but not completed, outside window" ) %>% 
-#   mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
-#   filter(Notes=="New Case") %>% 
-#   pull(Notes) %>% unique()
-# print(scheduled_not_completed_clinic_ids %>% kable())
-# cat("\n")
-# 
-# cat("In-clinic Follow-up Visit 1: Patient IDs of Patients Who Did Not Take Medication\n")
-# not_taking_meds_ids_clinic <- CV1 %>% 
-#   mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case')) %>% 
-#   filter(ad_study_meds == 0 ) %>% 
-#   mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
-#   filter(Notes=="New Case") %>% 
-#   pull(Notes) %>% unique()
-# print(not_taking_meds_ids_clinic %>% kable())
-# cat("\n")
-# 
-# 
-# cat("Among M04.5 Completed Within Visit Schedule Window group, below patients did not have NAC47 psmd_visitdt filled to indicate the used or not used drug barcode.\n")
-# CV1 %>% 
-#   mutate(Notes = ifelse(patient_id %in% patient_id_discussed , 'Discussed', 'New Case'))  %>% 
-#   filter(Category=="Completed Within Visit Schedule Window" & is.na(drug_used)) %>% 
-#  mutate(Notes = paste0(patient_id,":",Notes) %>% toString()) %>% 
-#   filter(Notes=="New Case") %>% 
-#   pull(Notes) %>% unique()
-# cat("\n")
-
-
 ########################################################
 
 cat(paste("BCVA Certification Number: ", BCVA_ISSUE$va_cert, "\n",
@@ -3576,24 +4398,25 @@ cat(paste("MP Certification Number: ", MP_ISSUE$mps_tech_cert, "\n",
 
 ########################################################
 
-cat("drug_taken_percent lower than 85%")
-print(drug_taken_percent_discuss %>% kable() )
+cat("drug_taken_percent lower than 85%, Patient ID:  ")
+cat(drug_taken_percent_discuss %>% filter(Notes =="New Case") %>% toString())
 cat("\n")
 
 ########################################################
 # cat("The MP Fixation Form has some errors that need to be fixed")
 #"The MP Fixation Form has some errors that need to be fixed."
-# (mp(Screening)) 
+# (mp(Screening))
 # these are the difference between chair and clinic; 
 # view(severity_ae)
 # view(ae_cause)
 
 # severity_ae %>% kable()
 # ae_cause %>% kable()
-cat("\n\n")
-cat("plasma_grading issue(missing patient_id for the blood barcode:")
-plasma_grading %>% filter(is.na(patient_id)) %>% mutate(Note="Disscussed")
-cat("\n\n")
+
+# cat("\n\n")
+# cat("plasma_grading issue(missing patient_id for the blood barcode:")
+# plasma_grading %>% filter(is.na(patient_id)) %>% mutate(Note="Disscussed")
+# cat("\n\n")
 
 ########################################################
 #important to share with team for this finding
@@ -3602,6 +4425,8 @@ cat("\n")
 cat("Identification of Study IDs, Eyes, and Visits with Non-4-2 fxstrategy or thstrategy in MP Data")
 non4_2<- result_non4_2 %>%
   mutate(Notes = case_when(patient_id %in% c("3101","3405","3408") ~ "Discussed on July 29",
+                           patient_id %in% c("3302") ~ "Discussed on 9/18",
+                           patient_id %in% c("2930","2931") ~ "Discussed on 9/25",
                           TRUE ~ "New Case")) %>%
   select(Notes,patient_id,redcap_event_name.factor,eye,fxstrategy,thstrategy)%>% 
 filter(Notes=="New Case")
@@ -3610,7 +4435,7 @@ non4_2 %>% kable()
 cat("\n")
 
 # 
-# mp(Screening)  
+ # mp(Screening)  
 ```
 
 ## Write Out Weekly Report;
@@ -3618,34 +4443,43 @@ cat("\n")
 ```{r, message=FALSE, results="asis",echo=FALSE,warning=FALSE}
 # library(openxlsx)
 # # certification_check_results
-#  write.xlsx(output_list, file = paste0("Certification_Results_", Sys.Date(), ".xlsx"),
-#           sheetName = names(output_list), rowNames = FALSE)
-# 
+# write.xlsx(output_list, file = paste0("Certification_Results_", Sys.Date(), ".xlsx"),
+#         sheetName = names(output_list), rowNames = FALSE)
+
 # 
 # write_xlsx(outgoing_barcode_issue,paste0("outgoing_barcode_issue ", Sys.Date(), ".xlsx"))
 # #
 # # # #Inventory_Report for Dr.Kong
-# write_xlsx(Distribution_summary, paste0("Dispense_Summary_",today(),".xlsx"))
-# write_xlsx(Distribution, path = paste0("Inventory_Report(C1A & C1B)", format(Sys.Date(), "%Y-%m-%d"), ".xlsx"))
 # 
+# write_xlsx(Distribution_summary, paste0("Dispense_Summary_",today(),".xlsx"))
+# write_xlsx(Distribution, path = paste0("Inventory_Report(C1A&C1B&C1C)", format(Sys.Date(), "%Y-%m-%d"), ".xlsx"))
+
 
 # Create a list of data frames with their corresponding sheet names
 
-data_list <- list(
-  "Dispense Summary" = Distribution_summary,
-  "Follow-ups before July 1" = CV_followup_index
-)
+# data_list <- list(
+#   "Dispense Summary" = Distribution_summary,
+#   "Follow-ups before July 1" = CV_followup_index
+# )
+
 
 # Write the data frames to different sheets in a single Excel file
 # write.xlsx(data_list, file = paste0("Dispense_Summary_", today(), ".xlsx"))
-# 
 # write_xlsx(Distribution, path = paste0("Inventory_Report(C1A & C1B)", format(Sys.Date(), "%Y-%m-%d"), ".xlsx"))
 
-# #Adverse Event ONLY write out for Dr.Kong when needed
+
+
+# # #Adverse Event ONLY write out for Dr.Kong when needed
 # write_xlsx(adverse_event, paste0("Adverse Event by ", today(),".xlsx"))
-# 
-# # fail_reasons
+# # 
+# # # fail_reasons
 # write.csv(fail,paste0("fail_reasons_",today(),".csv"))
+
+
+# EZ<- EZ_width %>% select(Screen_EZ_width = EZ_width , OD_OS,patient_id ) %>% 
+#   mutate(patient_id = as.character(patient_id))
+# For_new_analyst<-  eye_level_data_for_color_analysis %>% left_join(EZ, by = c("patient_id","OD_OS"))
+# write.csv(For_new_analyst,"eye_level_data_for_new_analyst.csv")
 
 ```
 
